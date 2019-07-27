@@ -1,0 +1,8 @@
+[package]
+name = "kvs"
+version = "0.1.0"
+authors = ["Thom Wright <github@thomwright.co.uk>"]
+edition = "2018"
+description = "A key-value store"
+
+[dependencies]
