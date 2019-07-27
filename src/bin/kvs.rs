@@ -4,14 +4,18 @@ use clap::{crate_version, App, AppSettings, Arg, SubCommand};
 use kvs::KvStore;
 
 fn main() {
-    let matches = App::new("kvs")
+    let package_name = env!("CARGO_PKG_NAME");
+    let package_authors = env!("CARGO_PKG_AUTHORS");
+    let package_description = env!("CARGO_PKG_DESCRIPTION");
+
+    let matches = App::new(package_name)
         .settings(&[
             AppSettings::VersionlessSubcommands,
             AppSettings::SubcommandRequiredElseHelp,
         ])
         .version(crate_version!())
-        .author("Thom Wright <dev@thomwright.co.uk>")
-        .about("A key-value store")
+        .author(package_authors)
+        .about(package_description)
         .subcommand(
             SubCommand::with_name("get")
                 .about("Get the string value of a given string key")
