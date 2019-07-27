@@ -1,7 +1,7 @@
 extern crate clap;
 use clap::{crate_version, App, AppSettings, Arg, SubCommand};
 
-use kvs::KvStore;
+// use kvs::KvStore;
 
 fn main() {
     let package_name = env!("CARGO_PKG_NAME");
@@ -52,25 +52,28 @@ fn main() {
         )
         .get_matches();
 
-    let mut kvstore = KvStore::new();
+    // let mut kvstore = KvStore::new();
 
     match matches.subcommand() {
         ("get", Some(command_matches)) => {
-            if let Some(key) = command_matches.value_of("key") {
-                kvstore.get(key.into());
+            if let Some(_key) = command_matches.value_of("key") {
+                unimplemented!("unimplemented");
+                // kvstore.get(key.into());
             }
         }
         ("set", Some(command_matches)) => {
-            if let (Some(key), Some(value)) = (
+            if let (Some(_key), Some(_value)) = (
                 command_matches.value_of("key"),
                 command_matches.value_of("value"),
             ) {
-                kvstore.set(key.into(), value.into());
+                unimplemented!("unimplemented");
+                // kvstore.set(key.into(), value.into());
             }
         }
         ("rm", Some(command_matches)) => {
-            if let Some(key) = command_matches.value_of("key") {
-                kvstore.remove(key.into());
+            if let Some(_key) = command_matches.value_of("key") {
+                unimplemented!("unimplemented");
+                // kvstore.remove(key.into());
             }
         }
         _ => panic!("Unknown command"),
