@@ -1,7 +1,18 @@
 //! The `kvs` crate is a simple key-value store, made by following the
 //! [Practical Networked Applications in Rust](https://github.com/pingcap/talent-plan/tree/master/rust) course.
 
-#![deny(missing_docs)]
+#![deny(
+    missing_debug_implementations,
+    missing_copy_implementations,
+    missing_docs,
+    trivial_casts,
+    trivial_numeric_casts,
+    unsafe_code,
+    unused_extern_crates,
+    unused_import_braces,
+    unused_qualifications
+)]
+#![warn(clippy::module_name_repetitions)]
 
 use std::collections::HashMap;
 
@@ -22,6 +33,7 @@ use std::collections::HashMap;
 ///
 /// let saved_val = store.get(key.clone());
 /// ```
+#[derive(Debug, Default)]
 pub struct KvStore {
     store: HashMap<String, String>,
 }
