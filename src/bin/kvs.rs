@@ -1,9 +1,21 @@
 extern crate clap;
 use clap::{crate_version, App, AppSettings, Arg, SubCommand};
+use failure;
+use kvs;
+use kvs::KvStore;
+use std::env;
 
-// use kvs::KvStore;
+fn main() -> kvs::Result<()> {
+    if let Err(e) = run_kvs() {
+        // Print the Display message for any error.
+        // Simply returning the error will print the Debug version, which is not as nice.
+        println!("{}", e);
+        std::process::exit(1)
+    }
+    Ok(())
+}
 
-fn main() {
+fn run_kvs() -> kvs::Result<()> {
     let package_name = env!("CARGO_PKG_NAME");
     let package_authors = env!("CARGO_PKG_AUTHORS");
     let package_description = env!("CARGO_PKG_DESCRIPTION");
@@ -52,30 +64,43 @@ fn main() {
         )
         .get_matches();
 
-    // let mut kvstore = KvStore::new();
+    let curr_dir = env::current_dir()?;
 
-    match matches.subcommand() {
-        ("get", Some(command_matches)) => {
-            if let Some(_key) = command_matches.value_of("key") {
-                unimplemented!("unimplemented");
-                // kvstore.get(key.into());
+    let mut kvstore = KvStore::open(&curr_dir)?;
+
+    return match matches.subcommand() {
+        ("get", Some(command_matches)) => match command_matches.value_of("key") {
+            Some(key) => {
+                match kvstore.get(key.into())? {
+                    Some(value) => println!("{}", value),
+                    None => println!("Key not found"),
+                }
+                Ok(())
             }
-        }
-        ("set", Some(command_matches)) => {
-            if let (Some(_key), Some(_value)) = (
-                command_matches.value_of("key"),
-                command_matches.value_of("value"),
-            ) {
-                unimplemented!("unimplemented");
-                // kvstore.set(key.into(), value.into());
-            }
-        }
-        ("rm", Some(command_matches)) => {
-            if let Some(_key) = command_matches.value_of("key") {
-                unimplemented!("unimplemented");
-                // kvstore.remove(key.into());
-            }
-        }
-        _ => panic!("Unknown command"),
-    }
+            _ => Err(KvsCliError::UnexpectedArgs {})?,
+        },
+        ("set", Some(command_matches)) => match (
+            command_matches.value_of("key"),
+            command_matches.value_of("value"),
+        ) {
+            (Some(key), Some(value)) => kvstore.set(key.into(), value.into()),
+            _ => Err(KvsCliError::UnexpectedArgs {})?,
+        },
+        ("rm", Some(command_matches)) => match command_matches.value_of("key") {
+            Some(key) => kvstore.remove(key.into()),
+            _ => Err(KvsCliError::UnexpectedArgs {})?,
+        },
+        (cmd, _) => Err(KvsCliError::UnknownCommand {
+            command: cmd.to_string(),
+        })?,
+    };
+}
+
+#[derive(Debug, failure::Fail)]
+enum KvsCliError {
+    #[fail(display = "Unknown command: {}", command)]
+    UnknownCommand { command: String },
+
+    #[fail(display = "Unexpected CLI arguments")]
+    UnexpectedArgs {},
 }

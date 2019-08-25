@@ -14,7 +14,16 @@
 )]
 #![warn(clippy::module_name_repetitions)]
 
+use failure;
+use serde::{Deserialize, Serialize};
+use serde_json;
 use std::collections::HashMap;
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::io::BufReader;
+use std::io::BufWriter;
+use std::io::Write;
+use std::result;
 
 /// Implementation of the key-value store.
 ///
@@ -33,33 +42,102 @@ use std::collections::HashMap;
 ///
 /// let saved_val = store.get(key.clone());
 /// ```
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct KvStore {
-    store: HashMap<String, String>,
+    writer: BufWriter<File>,
+
+    index: HashMap<String, String>,
 }
 
+// type LogPointer = u64;
+
 impl KvStore {
-    pub fn new() -> KvStore {
-        #![allow(missing_docs)]
+    /// Create a new KvStore using a log file in the given directory.
+    pub fn open(path: &std::path::Path) -> Result<KvStore> {
+        let mut file_path = path.to_path_buf();
+        file_path.push("log.json");
 
-        KvStore {
-            store: HashMap::new(),
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&file_path)?;
+
+        let buffered_writer = BufWriter::new(file.try_clone()?);
+
+        let iter = serde_json::Deserializer::from_reader(BufReader::new(file.try_clone()?))
+            .into_iter::<Command>();
+
+        let mut index = HashMap::new();
+        for item in iter {
+            match item? {
+                Command::Set { key, value } => {
+                    index.insert(key, value);
+                }
+                Command::Rm { key } => {
+                    index.remove(&key);
+                }
+            }
         }
+
+        Ok(KvStore {
+            writer: buffered_writer,
+            index: index,
+        })
     }
 
-    pub fn get(&mut self, key: String) -> Option<String> {
+    pub fn get(&mut self, key: String) -> Result<Option<String>> {
         #![allow(missing_docs)]
 
-        self.store.get(&key).cloned()
+        Ok(self.index.get(&key).map(|s| s.to_string()))
     }
-    pub fn set(&mut self, key: String, value: String) {
+
+    pub fn set(&mut self, key: String, value: String) -> Result<()> {
         #![allow(missing_docs)]
 
-        self.store.insert(key, value);
+        let ser_command = serde_json::to_vec(&Command::Set {
+            key: key.clone(),
+            value: value.clone(),
+        })?;
+
+        self.writer.write(&ser_command)?;
+
+        self.index.insert(key, value);
+
+        Ok(())
     }
-    pub fn remove(&mut self, key: String) {
+
+    pub fn remove(&mut self, key: String) -> Result<()> {
         #![allow(missing_docs)]
 
-        self.store.remove(&key);
+        if let None = self.get(key.clone())? {
+            return Err(KvsError::KeyNotFound {})?;
+        }
+
+        let ser_command = serde_json::to_vec(&Command::Rm { key: key.clone() })?;
+
+        self.writer.write(&ser_command)?;
+
+        self.index.remove(&key);
+
+        Ok(())
     }
+}
+
+/// Operations which can be performed on the database.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Command {
+    #[allow(missing_docs)]
+    Set { key: String, value: String },
+    #[allow(missing_docs)]
+    Rm { key: String },
+}
+
+/// Convenience Result type.
+pub type Result<T> = result::Result<T, failure::Error>;
+
+#[derive(Debug, failure::Fail)]
+enum KvsError {
+    #[fail(display = "Key not found")]
+    KeyNotFound {},
 }
