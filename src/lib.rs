@@ -91,17 +91,14 @@ impl KvStore {
             file_offset = commands.byte_offset().try_into()?;
         }
 
-        Ok(KvStore {
-            log: file,
-            index: index,
-        })
+        Ok(KvStore { log: file, index })
     }
 
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
         #![allow(missing_docs)]
 
         match self.index.get(&key) {
-            None => return Ok(None),
+            None => Ok(None),
 
             Some(&seek_pos) => {
                 let mut buffered_reader = BufReader::new(self.log.try_clone()?);
@@ -135,7 +132,7 @@ impl KvStore {
         let mut buffered_writer = BufWriter::new(self.log.try_clone()?);
         let write_pos = buffered_writer.seek(SeekFrom::End(0))?;
 
-        buffered_writer.write(&ser_command)?;
+        buffered_writer.write_all(&ser_command)?;
         buffered_writer.flush()?;
 
         self.index.insert(key, write_pos);
@@ -146,7 +143,7 @@ impl KvStore {
     pub fn remove(&mut self, key: String) -> Result<()> {
         #![allow(missing_docs)]
 
-        if let None = self.get(key.clone())? {
+        if self.get(key.clone())?.is_none() {
             return Err(KvsError::KeyNotFound {})?;
         }
 
@@ -157,7 +154,7 @@ impl KvStore {
 
         let mut buffered_writer = BufWriter::new(self.log.try_clone()?);
 
-        buffered_writer.write(&ser_command)?;
+        buffered_writer.write_all(&ser_command)?;
         buffered_writer.flush()?;
 
         self.index.remove(&key);

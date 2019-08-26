@@ -68,7 +68,7 @@ fn run_kvs() -> kvs::Result<()> {
 
     let mut kvstore = KvStore::open(&curr_dir)?;
 
-    return match matches.subcommand() {
+    match matches.subcommand() {
         ("get", Some(command_matches)) => match command_matches.value_of("key") {
             Some(key) => {
                 match kvstore.get(key.into())? {
@@ -93,7 +93,7 @@ fn run_kvs() -> kvs::Result<()> {
         (cmd, _) => Err(KvsCliError::UnknownCommand {
             command: cmd.to_string(),
         })?,
-    };
+    }
 }
 
 #[derive(Debug, failure::Fail)]
