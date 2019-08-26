@@ -18,10 +18,13 @@ use failure;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::BufReader;
 use std::io::BufWriter;
+use std::io::Seek;
+use std::io::SeekFrom;
 use std::io::Write;
 use std::result;
 
@@ -44,12 +47,11 @@ use std::result;
 /// ```
 #[derive(Debug)]
 pub struct KvStore {
-    writer: BufWriter<File>,
-
-    index: HashMap<String, String>,
+    log: File,
+    index: HashMap<String, LogPointer>,
 }
 
-// type LogPointer = u64;
+type LogPointer = u64;
 
 impl KvStore {
     /// Create a new KvStore using a log file in the given directory.
@@ -59,29 +61,32 @@ impl KvStore {
 
         let file = OpenOptions::new()
             .read(true)
-            .write(true)
+            .append(true)
             .create(true)
             .open(&file_path)?;
 
-        let buffered_writer = BufWriter::new(file.try_clone()?);
+        let buffered_reader = BufReader::new(file.try_clone()?);
+        let deserializer = serde_json::Deserializer::from_reader(buffered_reader);
+        let mut commands = deserializer.into_iter::<Command>();
 
-        let iter = serde_json::Deserializer::from_reader(BufReader::new(file.try_clone()?))
-            .into_iter::<Command>();
+        let mut index = HashMap::<String, LogPointer>::new();
 
-        let mut index = HashMap::new();
-        for item in iter {
-            match item? {
-                Command::Set { key, value } => {
-                    index.insert(key, value);
+        let mut file_offset = 0;
+        while let Some(command) = commands.next() {
+            match command? {
+                Command::Set { key, value: _ } => {
+                    index.insert(key, file_offset);
                 }
                 Command::Rm { key } => {
                     index.remove(&key);
                 }
             }
+
+            file_offset = commands.byte_offset().try_into()?;
         }
 
         Ok(KvStore {
-            writer: buffered_writer,
+            log: file,
             index: index,
         })
     }
@@ -89,7 +94,28 @@ impl KvStore {
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
         #![allow(missing_docs)]
 
-        Ok(self.index.get(&key).map(|s| s.to_string()))
+        match self.index.get(&key) {
+            None => return Ok(None),
+
+            Some(&seek_pos) => {
+                let mut buffered_reader = BufReader::new(self.log.try_clone()?);
+                buffered_reader.seek(SeekFrom::Start(seek_pos))?;
+
+                let mut deserializer = serde_json::Deserializer::from_reader(buffered_reader);
+                let command = Command::deserialize(&mut deserializer)?;
+
+                match command {
+                    Command::Set { key: ckey, value } => {
+                        if ckey == key {
+                            Ok(Some(value))
+                        } else {
+                            Err(KvsError::InvalidKeyFound {})?
+                        }
+                    }
+                    Command::Rm { key: _ } => Err(KvsError::InvalidCommandFound {})?,
+                }
+            }
+        }
     }
 
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
@@ -100,9 +126,13 @@ impl KvStore {
             value: value.clone(),
         })?;
 
-        self.writer.write(&ser_command)?;
+        let mut buffered_writer = BufWriter::new(self.log.try_clone()?);
+        let write_pos = buffered_writer.seek(SeekFrom::End(0))?;
 
-        self.index.insert(key, value);
+        buffered_writer.write(&ser_command)?;
+        buffered_writer.flush()?;
+
+        self.index.insert(key, write_pos);
 
         Ok(())
     }
@@ -116,7 +146,10 @@ impl KvStore {
 
         let ser_command = serde_json::to_vec(&Command::Rm { key: key.clone() })?;
 
-        self.writer.write(&ser_command)?;
+        let mut buffered_writer = BufWriter::new(self.log.try_clone()?);
+
+        buffered_writer.write(&ser_command)?;
+        buffered_writer.flush()?;
 
         self.index.remove(&key);
 
@@ -140,4 +173,10 @@ pub type Result<T> = result::Result<T, failure::Error>;
 enum KvsError {
     #[fail(display = "Key not found")]
     KeyNotFound {},
+
+    #[fail(display = "Invalid command found in log")]
+    InvalidCommandFound {},
+
+    #[fail(display = "Invalid key found in log")]
+    InvalidKeyFound {},
 }
