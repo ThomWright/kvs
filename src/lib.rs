@@ -56,7 +56,12 @@ type LogPointer = u64;
 impl KvStore {
     /// Create a new KvStore using a log file in the given directory.
     pub fn open(path: &std::path::Path) -> Result<KvStore> {
+
         let mut file_path = path.to_path_buf();
+        file_path.push(".kvs");
+
+        std::fs::create_dir(&file_path)?;
+
         file_path.push("log.json");
 
         let file = OpenOptions::new()
