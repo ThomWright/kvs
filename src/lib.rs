@@ -56,11 +56,10 @@ type LogPointer = u64;
 impl KvStore {
     /// Create a new KvStore using a log file in the given directory.
     pub fn open(path: &std::path::Path) -> Result<KvStore> {
-
         let mut file_path = path.to_path_buf();
         file_path.push(".kvs");
 
-        std::fs::create_dir(&file_path)?;
+        std::fs::create_dir_all(&file_path)?;
 
         file_path.push("log.json");
 
@@ -78,11 +77,13 @@ impl KvStore {
 
         let mut file_offset = 0;
         while let Some(command) = commands.next() {
-            match command? {
-                Command::Set { key, value: _ } => {
+            let Command { key, value } = command?;
+
+            match value {
+                Some(_) => {
                     index.insert(key, file_offset);
                 }
-                Command::Rm { key } => {
+                None => {
                     index.remove(&key);
                 }
             }
@@ -109,15 +110,15 @@ impl KvStore {
                 let mut deserializer = serde_json::Deserializer::from_reader(buffered_reader);
                 let command = Command::deserialize(&mut deserializer)?;
 
-                match command {
-                    Command::Set { key: ckey, value } => {
-                        if ckey == key {
-                            Ok(Some(value))
-                        } else {
-                            Err(KvsError::InvalidKeyFound {})?
-                        }
+                let Command { key: ckey, value } = command;
+
+                if ckey == key {
+                    match value {
+                        Some(_) => Ok(value),
+                        None => Err(KvsError::InvalidCommandFound {})?,
                     }
-                    Command::Rm { key: _ } => Err(KvsError::InvalidCommandFound {})?,
+                } else {
+                    Err(KvsError::InvalidKeyFound {})?
                 }
             }
         }
@@ -126,9 +127,9 @@ impl KvStore {
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
         #![allow(missing_docs)]
 
-        let ser_command = serde_json::to_vec(&Command::Set {
+        let ser_command = serde_json::to_vec(&Command {
             key: key.clone(),
-            value: value.clone(),
+            value: Some(value.clone()),
         })?;
 
         let mut buffered_writer = BufWriter::new(self.log.try_clone()?);
@@ -149,7 +150,10 @@ impl KvStore {
             return Err(KvsError::KeyNotFound {})?;
         }
 
-        let ser_command = serde_json::to_vec(&Command::Rm { key: key.clone() })?;
+        let ser_command = serde_json::to_vec(&Command {
+            key: key.clone(),
+            value: None,
+        })?;
 
         let mut buffered_writer = BufWriter::new(self.log.try_clone()?);
 
@@ -163,12 +167,14 @@ impl KvStore {
 }
 
 /// Operations which can be performed on the database.
+/// A 'remove' command has `value` equal to `None`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Command {
-    #[allow(missing_docs)]
-    Set { key: String, value: String },
-    #[allow(missing_docs)]
-    Rm { key: String },
+struct Command {
+    #[serde(rename = "k")]
+    key: String,
+
+    #[serde(rename = "v")]
+    value: Option<String>,
 }
 
 /// Convenience Result type.
