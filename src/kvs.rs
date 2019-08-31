@@ -1,3 +1,4 @@
+use crate::bytes::Bytes;
 use crate::KvsError;
 use crate::Result;
 use serde::{Deserialize, Serialize};
@@ -32,13 +33,18 @@ use std::io::Write;
 #[derive(Debug)]
 pub struct KvStore {
     log: File,
-    index: HashMap<String, LogPointer>,
-
-    // TODO: rather than counting commands, number of bytes we could save would be better
-    redundancy_count: u64,
+    index: HashMap<String, ValueInfo>,
+    uncompacted: Bytes,
 }
 
-type LogPointer = u64;
+#[derive(Debug, Clone, Copy)]
+struct ValueInfo {
+    /// Position of value in file
+    file_offset: Bytes,
+
+    /// Size of serialised command in file
+    size: Bytes,
+}
 
 impl KvStore {
     /// Create a new KvStore using a log file in the given directory.
@@ -60,33 +66,47 @@ impl KvStore {
         let deserializer = serde_json::Deserializer::from_reader(buffered_reader);
         let mut commands = deserializer.into_iter::<Command>();
 
-        let mut index = HashMap::<String, LogPointer>::new();
+        let mut index = HashMap::<String, ValueInfo>::new();
 
-        let mut file_offset = 0;
-        let mut redundancy_count = 0;
+        let mut file_offset = Bytes(0);
+        let mut uncompacted = Bytes(0);
         while let Some(command) = commands.next() {
+            let next_file_offset: Bytes = commands.byte_offset().try_into()?;
+            let cmd_size = next_file_offset - file_offset;
+
             let Command { key, value } = command?;
+
+            if let Some(ValueInfo {
+                size: prev_cmd_size,
+                ..
+            }) = index.get(&key)
+            {
+                uncompacted += prev_cmd_size;
+            }
 
             match value {
                 Some(_) => {
-                    if index.contains_key(&key) {
-                        redundancy_count = redundancy_count + 1;
-                    }
-                    index.insert(key, file_offset);
+                    index.insert(
+                        key,
+                        ValueInfo {
+                            file_offset,
+                            size: cmd_size,
+                        },
+                    );
                 }
                 None => {
-                    redundancy_count = redundancy_count + 1;
+                    uncompacted += cmd_size;
                     index.remove(&key);
                 }
             }
 
-            file_offset = commands.byte_offset().try_into()?;
+            file_offset = next_file_offset;
         }
 
         Ok(KvStore {
             log: file,
             index,
-            redundancy_count,
+            uncompacted,
         })
     }
 
@@ -96,9 +116,9 @@ impl KvStore {
         match self.index.get(&key) {
             None => Ok(None),
 
-            Some(&seek_pos) => {
+            Some(&ValueInfo { file_offset, .. }) => {
                 let mut buffered_reader = BufReader::new(self.log.try_clone()?);
-                buffered_reader.seek(SeekFrom::Start(seek_pos))?;
+                buffered_reader.seek(SeekFrom::Start(file_offset.0))?;
 
                 let mut deserializer = serde_json::Deserializer::from_reader(buffered_reader);
                 let command = Command::deserialize(&mut deserializer)?;
@@ -131,10 +151,16 @@ impl KvStore {
         buffered_writer.write_all(&ser_command)?;
         buffered_writer.flush()?;
 
-        if self.index.contains_key(&key) {
-            self.redundancy_count = self.redundancy_count + 1;
+        if let Some(ValueInfo { size, .. }) = self.index.get(&key) {
+            self.uncompacted += size;
         }
-        self.index.insert(key, write_pos);
+        self.index.insert(
+            key,
+            ValueInfo {
+                file_offset: Bytes(write_pos),
+                size: Bytes(ser_command.len().try_into()?),
+            },
+        );
 
         Ok(())
     }
@@ -142,24 +168,28 @@ impl KvStore {
     pub fn remove(&mut self, key: String) -> Result<()> {
         #![allow(missing_docs)]
 
-        if self.get(key.clone())?.is_none() {
-            return Err(KvsError::KeyNotFound {})?;
+        match self.index.get(&key) {
+            None => Err(KvsError::KeyNotFound {})?,
+
+            Some(ValueInfo { size: prev_cmd_size, .. }) => {
+                let ser_command = serde_json::to_vec(&Command {
+                    key: key.clone(),
+                    value: None,
+                })?;
+
+                let mut buffered_writer = BufWriter::new(self.log.try_clone()?);
+
+                buffered_writer.write_all(&ser_command)?;
+                buffered_writer.flush()?;
+
+                let cmd_len: Bytes = ser_command.len().try_into()?;
+                self.uncompacted = self.uncompacted + prev_cmd_size + cmd_len;
+
+                self.index.remove(&key);
+
+                Ok(())
+            }
         }
-
-        let ser_command = serde_json::to_vec(&Command {
-            key: key.clone(),
-            value: None,
-        })?;
-
-        let mut buffered_writer = BufWriter::new(self.log.try_clone()?);
-
-        buffered_writer.write_all(&ser_command)?;
-        buffered_writer.flush()?;
-
-        self.redundancy_count = self.redundancy_count + 1;
-        self.index.remove(&key);
-
-        Ok(())
     }
 }
 

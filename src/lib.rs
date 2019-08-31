@@ -20,3 +20,4 @@ pub use kvs::KvStore;
 
 mod kvs;
 mod errors;
+mod bytes;
