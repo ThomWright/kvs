@@ -60,8 +60,8 @@ type LogPointer = u64;
 
 impl KvStore {
     /// Create a new KvStore using a log file in the given directory.
-    pub fn open(path: &std::path::Path) -> Result<KvStore> {
-        let mut file_path = path.to_path_buf();
+    pub fn open(path: impl Into<std::path::PathBuf>) -> Result<KvStore> {
+        let mut file_path = path.into();
         file_path.push(".kvs");
 
         std::fs::create_dir_all(&file_path)?;
