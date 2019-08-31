@@ -16,18 +16,14 @@ fn main() -> kvs::Result<()> {
 }
 
 fn run_kvs() -> kvs::Result<()> {
-    let package_name = env!("CARGO_PKG_NAME");
-    let package_authors = env!("CARGO_PKG_AUTHORS");
-    let package_description = env!("CARGO_PKG_DESCRIPTION");
-
-    let matches = App::new(package_name)
+    let matches = App::new(env!("CARGO_PKG_NAME"))
+        .version(crate_version!())
+        .author(env!("CARGO_PKG_AUTHORS"))
+        .about(env!("CARGO_PKG_DESCRIPTION"))
         .settings(&[
             AppSettings::VersionlessSubcommands,
             AppSettings::SubcommandRequiredElseHelp,
         ])
-        .version(crate_version!())
-        .author(package_authors)
-        .about(package_description)
         .subcommand(
             SubCommand::with_name("get")
                 .about("Get the string value of a given string key")
