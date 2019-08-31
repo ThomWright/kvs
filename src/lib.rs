@@ -49,6 +49,9 @@ use std::result;
 pub struct KvStore {
     log: File,
     index: HashMap<String, LogPointer>,
+
+    // TODO: rather than counting commands, number of bytes we could save would be better
+    redundancy_count: u64,
 }
 
 type LogPointer = u64;
@@ -76,14 +79,19 @@ impl KvStore {
         let mut index = HashMap::<String, LogPointer>::new();
 
         let mut file_offset = 0;
+        let mut redundancy_count = 0;
         while let Some(command) = commands.next() {
             let Command { key, value } = command?;
 
             match value {
                 Some(_) => {
+                    if index.contains_key(&key) {
+                        redundancy_count = redundancy_count + 1;
+                    }
                     index.insert(key, file_offset);
                 }
                 None => {
+                    redundancy_count = redundancy_count + 1;
                     index.remove(&key);
                 }
             }
@@ -91,7 +99,11 @@ impl KvStore {
             file_offset = commands.byte_offset().try_into()?;
         }
 
-        Ok(KvStore { log: file, index })
+        Ok(KvStore {
+            log: file,
+            index,
+            redundancy_count,
+        })
     }
 
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
@@ -135,6 +147,9 @@ impl KvStore {
         buffered_writer.write_all(&ser_command)?;
         buffered_writer.flush()?;
 
+        if self.index.contains_key(&key) {
+            self.redundancy_count = self.redundancy_count + 1;
+        }
         self.index.insert(key, write_pos);
 
         Ok(())
@@ -157,6 +172,7 @@ impl KvStore {
         buffered_writer.write_all(&ser_command)?;
         buffered_writer.flush()?;
 
+        self.redundancy_count = self.redundancy_count + 1;
         self.index.remove(&key);
 
         Ok(())
