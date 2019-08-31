@@ -14,7 +14,8 @@
 )]
 #![warn(clippy::module_name_repetitions)]
 
-use failure;
+pub use errors::KvsError;
+pub use errors::Result;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
@@ -26,7 +27,8 @@ use std::io::BufWriter;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::io::Write;
-use std::result;
+
+mod errors;
 
 /// Implementation of the key-value store.
 ///
@@ -124,10 +126,10 @@ impl KvStore {
                 if ckey == key {
                     match value {
                         Some(_) => Ok(value),
-                        None => Err(KvsError::InvalidCommandFound {})?,
+                        None => Err(KvsError::UnexpectedCommand {})?,
                     }
                 } else {
-                    Err(KvsError::InvalidKeyFound {})?
+                    Err(KvsError::UnexpectedKey {})?
                 }
             }
         }
@@ -188,19 +190,4 @@ struct Command {
 
     #[serde(rename = "v")]
     value: Option<String>,
-}
-
-/// Convenience Result type.
-pub type Result<T> = result::Result<T, failure::Error>;
-
-#[derive(Debug, failure::Fail)]
-enum KvsError {
-    #[fail(display = "Key not found")]
-    KeyNotFound {},
-
-    #[fail(display = "Invalid command found in log")]
-    InvalidCommandFound {},
-
-    #[fail(display = "Invalid key found in log")]
-    InvalidKeyFound {},
 }
