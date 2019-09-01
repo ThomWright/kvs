@@ -12,8 +12,23 @@ use std::io::BufWriter;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::io::Write;
+use std::path::PathBuf;
 
-/// Implementation of the key-value store.
+/* TODO: use multiple files
+ * - ordered
+ * - write to latest
+ * - other read-only
+ * - to compact (with latest file X)
+ *   - create new file (X+1), to write compacted logs into
+ *   - create another new file (X+2), all normal writes go here
+ *   - write compacted logs to X+1, duplication is fine
+ *   - remove all files <=X
+ */
+
+/// Implementation of a simple, persistent key-value store.
+///
+/// The data is stored in multiple files in a single directory.
+/// Only the latest log file is actively written to.
 ///
 /// # Examples
 ///
@@ -32,7 +47,10 @@ use std::io::Write;
 /// ```
 #[derive(Debug)]
 pub struct KvStore {
-    log: File,
+    /// Path of directory containing log files
+    path: PathBuf,
+    writer: BufWriter<File>,
+    readers: HashMap<FileId, BufReader<File>>,
     index: HashMap<String, ValueInfo>,
     uncompacted: Bytes,
 }
@@ -44,17 +62,26 @@ struct ValueInfo {
 
     /// Size of serialised command in file
     size: Bytes,
+
+    /// Identifier for file the value is stored in
+    file_id: FileId,
 }
 
+type FileId = u64;
+
 impl KvStore {
-    /// Create a new KvStore using a log file in the given directory.
-    pub fn open(path: impl Into<std::path::PathBuf>) -> Result<KvStore> {
-        let mut file_path = path.into();
-        file_path.push(".kvs");
+    /// Create a new KvStore, using the given `path` directory.
+    /// The log files will be stored in a directory named `.kvs` inside `path`.
+    pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
+        let mut kvs_dir = path.into();
+        kvs_dir.push(".kvs");
 
-        std::fs::create_dir_all(&file_path)?;
+        std::fs::create_dir_all(&kvs_dir)?;
 
-        file_path.push("log.json");
+        let mut index = HashMap::<String, ValueInfo>::new();
+
+        let mut file_path = kvs_dir.clone();
+        file_path.push("1.log");
 
         let file = OpenOptions::new()
             .read(true)
@@ -62,14 +89,12 @@ impl KvStore {
             .create(true)
             .open(&file_path)?;
 
-        let buffered_reader = BufReader::new(file.try_clone()?);
-        let deserializer = serde_json::Deserializer::from_reader(buffered_reader);
+        let mut buffered_reader = BufReader::new(file.try_clone()?);
+        let deserializer = serde_json::Deserializer::from_reader(&mut buffered_reader);
         let mut commands = deserializer.into_iter::<Command>();
 
-        let mut index = HashMap::<String, ValueInfo>::new();
-
-        let mut file_offset = Bytes(0);
         let mut uncompacted = Bytes(0);
+        let mut file_offset = Bytes(0);
         while let Some(command) = commands.next() {
             let next_file_offset: Bytes = commands.byte_offset().try_into()?;
             let cmd_size = next_file_offset - file_offset;
@@ -91,6 +116,7 @@ impl KvStore {
                         ValueInfo {
                             file_offset,
                             size: cmd_size,
+                            file_id: 1,
                         },
                     );
                 }
@@ -103,8 +129,16 @@ impl KvStore {
             file_offset = next_file_offset;
         }
 
+        let buffered_writer = BufWriter::new(file.try_clone()?);
+
+        let mut readers = HashMap::new();
+        readers.insert(1, buffered_reader);
+
         Ok(KvStore {
-            log: file,
+            path: kvs_dir,
+            writer: buffered_writer,
+            readers,
+
             index,
             uncompacted,
         })
@@ -117,10 +151,13 @@ impl KvStore {
             None => Ok(None),
 
             Some(&ValueInfo { file_offset, .. }) => {
-                let mut buffered_reader = BufReader::new(self.log.try_clone()?);
-                buffered_reader.seek(SeekFrom::Start(file_offset.0))?;
+                let reader = self
+                    .readers
+                    .get_mut(&1)
+                    .expect("Reader not found for file ID");
+                reader.seek(SeekFrom::Start(file_offset.0))?;
 
-                let mut deserializer = serde_json::Deserializer::from_reader(buffered_reader);
+                let mut deserializer = serde_json::Deserializer::from_reader(reader);
                 let command = Command::deserialize(&mut deserializer)?;
 
                 let Command { key: ckey, value } = command;
@@ -145,11 +182,10 @@ impl KvStore {
             value: Some(value.clone()),
         })?;
 
-        let mut buffered_writer = BufWriter::new(self.log.try_clone()?);
-        let write_pos = buffered_writer.seek(SeekFrom::End(0))?;
+        let write_pos = self.writer.seek(SeekFrom::End(0))?;
 
-        buffered_writer.write_all(&ser_command)?;
-        buffered_writer.flush()?;
+        self.writer.write_all(&ser_command)?;
+        self.writer.flush()?;
 
         if let Some(ValueInfo { size, .. }) = self.index.get(&key) {
             self.uncompacted += size;
@@ -159,6 +195,7 @@ impl KvStore {
             ValueInfo {
                 file_offset: Bytes(write_pos),
                 size: Bytes(ser_command.len().try_into()?),
+                file_id: 1,
             },
         );
 
@@ -171,16 +208,17 @@ impl KvStore {
         match self.index.get(&key) {
             None => Err(KvsError::KeyNotFound {})?,
 
-            Some(ValueInfo { size: prev_cmd_size, .. }) => {
+            Some(ValueInfo {
+                size: prev_cmd_size,
+                ..
+            }) => {
                 let ser_command = serde_json::to_vec(&Command {
                     key: key.clone(),
                     value: None,
                 })?;
 
-                let mut buffered_writer = BufWriter::new(self.log.try_clone()?);
-
-                buffered_writer.write_all(&ser_command)?;
-                buffered_writer.flush()?;
+                self.writer.write_all(&ser_command)?;
+                self.writer.flush()?;
 
                 let cmd_len: Bytes = ser_command.len().try_into()?;
                 self.uncompacted = self.uncompacted + prev_cmd_size + cmd_len;
