@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
 use std::convert::TryInto;
+use std::ffi::OsStr;
+use std::ffi::OsString;
+use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::BufReader;
@@ -30,6 +33,8 @@ use std::path::PathBuf;
 /// The data is stored in multiple files in a single directory.
 /// Only the latest log file is actively written to.
 ///
+/// New files are created when compaction occurs.
+///
 /// # Examples
 ///
 /// Setting and retrieving a value for the key `key`.
@@ -50,6 +55,7 @@ pub struct KvStore {
     /// Path of directory containing log files
     path: PathBuf,
     writer: BufWriter<File>,
+    write_file_id: FileId,
     readers: HashMap<FileId, BufReader<File>>,
     index: HashMap<String, ValueInfo>,
     uncompacted: Bytes,
@@ -73,70 +79,61 @@ impl KvStore {
     /// Create a new KvStore, using the given `path` directory.
     /// The log files will be stored in a directory named `.kvs` inside `path`.
     pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
-        let mut kvs_dir = path.into();
-        kvs_dir.push(".kvs");
-
-        std::fs::create_dir_all(&kvs_dir)?;
-
-        let mut index = HashMap::<String, ValueInfo>::new();
-
-        let mut file_path = kvs_dir.clone();
-        file_path.push("1.log");
-
-        let file = OpenOptions::new()
-            .read(true)
-            .append(true)
-            .create(true)
-            .open(&file_path)?;
-
-        let mut buffered_reader = BufReader::new(file.try_clone()?);
-        let deserializer = serde_json::Deserializer::from_reader(&mut buffered_reader);
-        let mut commands = deserializer.into_iter::<Command>();
-
-        let mut uncompacted = Bytes(0);
-        let mut file_offset = Bytes(0);
-        while let Some(command) = commands.next() {
-            let next_file_offset: Bytes = commands.byte_offset().try_into()?;
-            let cmd_size = next_file_offset - file_offset;
-
-            let Command { key, value } = command?;
-
-            if let Some(ValueInfo {
-                size: prev_cmd_size,
-                ..
-            }) = index.get(&key)
-            {
-                uncompacted += prev_cmd_size;
-            }
-
-            match value {
-                Some(_) => {
-                    index.insert(
-                        key,
-                        ValueInfo {
-                            file_offset,
-                            size: cmd_size,
-                            file_id: 1,
-                        },
-                    );
-                }
-                None => {
-                    uncompacted += cmd_size;
-                    index.remove(&key);
-                }
-            }
-
-            file_offset = next_file_offset;
+        let path_dir = path.into();
+        if !path_dir.is_dir() {
+            Err(KvsError::NotADirectory {})?
         }
+        let kvs_dir = path_dir.join(".kvs");
 
-        let buffered_writer = BufWriter::new(file.try_clone()?);
+        fs::create_dir_all(&kvs_dir)?;
+
+        let mut file_ids = fs::read_dir(&kvs_dir)?
+            .flat_map(|f| f)
+            .map(|file| file.path())
+            .filter(|path| path.extension() == Some(&OsString::from("log")))
+            .flat_map(|path| path.file_stem().and_then(OsStr::to_str).map(String::from))
+            .map(|file_stem| {
+                Ok(file_stem
+                    .parse::<FileId>()
+                    .map_err(|_| KvsError::UnexpectedFileName {})?)
+            })
+            .collect::<Result<Vec<FileId>>>()?;
+
+        file_ids.sort_unstable();
 
         let mut readers = HashMap::new();
-        readers.insert(1, buffered_reader);
+        let mut index = HashMap::<String, ValueInfo>::new();
+        let mut uncompacted = Bytes(0);
+
+        for id in &file_ids {
+            let file_path = kvs_dir.join(format!("{}.log", id));
+            let mut buffered_reader =
+                BufReader::new(OpenOptions::new().read(true).open(&file_path)?);
+
+            uncompacted += load_file_into_index(*id, &mut buffered_reader, &mut index)?;
+
+            readers.insert(*id, buffered_reader);
+        }
+
+        let write_file_id = file_ids.last().unwrap_or(&0) + 1;
+        let file_path = kvs_dir.join(format!("{}.log", write_file_id));
+
+        let buffered_writer = BufWriter::new(
+            OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&file_path)?,
+        );
+
+        readers.insert(
+            write_file_id,
+            BufReader::new(OpenOptions::new().read(true).open(&file_path)?),
+        );
 
         Ok(KvStore {
             path: kvs_dir,
             writer: buffered_writer,
+            write_file_id,
             readers,
 
             index,
@@ -150,10 +147,14 @@ impl KvStore {
         match self.index.get(&key) {
             None => Ok(None),
 
-            Some(&ValueInfo { file_offset, .. }) => {
+            Some(&ValueInfo {
+                file_offset,
+                file_id,
+                ..
+            }) => {
                 let reader = self
                     .readers
-                    .get_mut(&1)
+                    .get_mut(&file_id)
                     .expect("Reader not found for file ID");
                 reader.seek(SeekFrom::Start(file_offset.0))?;
 
@@ -195,7 +196,7 @@ impl KvStore {
             ValueInfo {
                 file_offset: Bytes(write_pos),
                 size: Bytes(ser_command.len().try_into()?),
-                file_id: 1,
+                file_id: self.write_file_id,
             },
         );
 
@@ -240,4 +241,51 @@ struct Command {
 
     #[serde(rename = "v")]
     value: Option<String>,
+}
+
+fn load_file_into_index(
+    file_id: FileId,
+    buffered_reader: &mut BufReader<File>,
+    index: &mut HashMap<String, ValueInfo>,
+) -> Result<Bytes> {
+    let deserializer = serde_json::Deserializer::from_reader(buffered_reader);
+    let mut commands = deserializer.into_iter::<Command>();
+
+    let mut uncompacted = Bytes(0);
+    let mut file_offset = Bytes(0);
+    while let Some(command) = commands.next() {
+        let next_file_offset: Bytes = commands.byte_offset().try_into()?;
+        let cmd_size = next_file_offset - file_offset;
+
+        let Command { key, value } = command?;
+
+        if let Some(ValueInfo {
+            size: prev_cmd_size,
+            ..
+        }) = index.get(&key)
+        {
+            uncompacted += prev_cmd_size;
+        }
+
+        match value {
+            Some(_) => {
+                index.insert(
+                    key,
+                    ValueInfo {
+                        file_offset,
+                        size: cmd_size,
+                        file_id,
+                    },
+                );
+            }
+            None => {
+                uncompacted += cmd_size;
+                index.remove(&key);
+            }
+        }
+
+        file_offset = next_file_offset;
+    }
+
+    Ok(uncompacted)
 }
