@@ -14,10 +14,10 @@
 )]
 #![warn(clippy::module_name_repetitions)]
 
-pub use errors::KvsError;
-pub use errors::Result;
-pub use kvs::KvStore;
-
 mod kvs;
 mod errors;
 mod bytes;
+
+pub use errors::KvsError;
+pub use errors::Result;
+pub use crate::kvs::KvStore;

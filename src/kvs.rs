@@ -40,15 +40,14 @@ use std::path::PathBuf;
 /// Setting and retrieving a value for the key `key`.
 ///
 /// ```
-/// use kvs::KvStore;
-///
-/// let mut store = KvStore::new();
+/// let mut store = kvs::KvStore::open(".")?;
 ///
 /// let key = "key".to_owned();
 ///
 /// store.set(key.clone(), "value".to_owned());
 ///
 /// let saved_val = store.get(key.clone());
+/// # Ok::<(), failure::Error>(())
 /// ```
 #[derive(Debug)]
 pub struct KvStore {
