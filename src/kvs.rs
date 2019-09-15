@@ -1,32 +1,19 @@
 use crate::bytes::Bytes;
+use crate::file;
+use crate::file::get_log_file_ids;
+use crate::file::KvsWriter;
 use crate::KvsError;
 use crate::Result;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
 use std::convert::TryInto;
-use std::ffi::OsStr;
-use std::ffi::OsString;
 use std::fs;
 use std::fs::File;
-use std::fs::OpenOptions;
 use std::io::BufReader;
-use std::io::BufWriter;
 use std::io::Seek;
 use std::io::SeekFrom;
-use std::io::Write;
 use std::path::PathBuf;
-
-/* TODO: use multiple files
- * - ordered
- * - write to latest
- * - other read-only
- * - to compact (with latest file X)
- *   - create new file (X+1), to write compacted logs into
- *   - create another new file (X+2), all normal writes go here
- *   - write compacted logs to X+1, duplication is fine
- *   - remove all files <=X
- */
 
 /// Implementation of a simple, persistent key-value store.
 ///
@@ -53,12 +40,15 @@ use std::path::PathBuf;
 pub struct KvStore {
     /// Path of directory containing log files
     path: PathBuf,
-    writer: BufWriter<File>,
-    write_file_id: FileId,
-    readers: HashMap<FileId, BufReader<File>>,
-    index: HashMap<String, ValueInfo>,
+    writer: KvsWriter,
+
+    readers: Readers,
+    index: Index,
     uncompacted: Bytes,
 }
+
+type Readers = HashMap<file::Id, BufReader<File>>;
+type Index = HashMap<String, ValueInfo>;
 
 #[derive(Debug, Clone, Copy)]
 struct ValueInfo {
@@ -69,10 +59,8 @@ struct ValueInfo {
     size: Bytes,
 
     /// Identifier for file the value is stored in
-    file_id: FileId,
+    file_id: file::Id,
 }
-
-type FileId = u64;
 
 impl KvStore {
     /// Create a new KvStore, using the given `path` directory.
@@ -86,18 +74,7 @@ impl KvStore {
 
         fs::create_dir_all(&kvs_dir)?;
 
-        let mut file_ids = fs::read_dir(&kvs_dir)?
-            .flat_map(|f| f)
-            .map(|file| file.path())
-            .filter(|path| path.extension() == Some(&OsString::from("log")))
-            .flat_map(|path| path.file_stem().and_then(OsStr::to_str).map(String::from))
-            .map(|file_stem| {
-                Ok(file_stem
-                    .parse::<FileId>()
-                    .map_err(|_| KvsError::UnexpectedFileName {})?)
-            })
-            .collect::<Result<Vec<FileId>>>()?;
-
+        let mut file_ids = get_log_file_ids(&kvs_dir)?;
         file_ids.sort_unstable();
 
         let mut readers = HashMap::new();
@@ -105,9 +82,7 @@ impl KvStore {
         let mut uncompacted = Bytes(0);
 
         for id in &file_ids {
-            let file_path = kvs_dir.join(format!("{}.log", id));
-            let mut buffered_reader =
-                BufReader::new(OpenOptions::new().read(true).open(&file_path)?);
+            let mut buffered_reader = file::new_reader(&kvs_dir, *id)?;
 
             uncompacted += load_file_into_index(*id, &mut buffered_reader, &mut index)?;
 
@@ -115,24 +90,12 @@ impl KvStore {
         }
 
         let write_file_id = file_ids.last().unwrap_or(&0) + 1;
-        let file_path = kvs_dir.join(format!("{}.log", write_file_id));
-
-        let buffered_writer = BufWriter::new(
-            OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(&file_path)?,
-        );
-
-        readers.insert(
-            write_file_id,
-            BufReader::new(OpenOptions::new().read(true).open(&file_path)?),
-        );
+        let writer = KvsWriter::new(&kvs_dir, write_file_id)?;
+        readers.insert(write_file_id, file::new_reader(&kvs_dir, write_file_id)?);
 
         Ok(KvStore {
             path: kvs_dir,
-            writer: buffered_writer,
-            write_file_id,
+            writer,
             readers,
 
             index,
@@ -182,10 +145,7 @@ impl KvStore {
             value: Some(value.clone()),
         })?;
 
-        let write_pos = self.writer.seek(SeekFrom::End(0))?;
-
-        self.writer.write_all(&ser_command)?;
-        self.writer.flush()?;
+        let write_pos = self.writer.write_log(&ser_command)?;
 
         if let Some(ValueInfo { size, .. }) = self.index.get(&key) {
             self.uncompacted += size;
@@ -195,7 +155,7 @@ impl KvStore {
             ValueInfo {
                 file_offset: Bytes(write_pos),
                 size: Bytes(ser_command.len().try_into()?),
-                file_id: self.write_file_id,
+                file_id: self.writer.id,
             },
         );
 
@@ -217,8 +177,7 @@ impl KvStore {
                     value: None,
                 })?;
 
-                self.writer.write_all(&ser_command)?;
-                self.writer.flush()?;
+                self.writer.write_log(&ser_command)?;
 
                 let cmd_len: Bytes = ser_command.len().try_into()?;
                 self.uncompacted = self.uncompacted + prev_cmd_size + cmd_len;
@@ -243,9 +202,9 @@ struct Command {
 }
 
 fn load_file_into_index(
-    file_id: FileId,
+    file_id: file::Id,
     buffered_reader: &mut BufReader<File>,
-    index: &mut HashMap<String, ValueInfo>,
+    index: &mut Index,
 ) -> Result<Bytes> {
     let deserializer = serde_json::Deserializer::from_reader(buffered_reader);
     let mut commands = deserializer.into_iter::<Command>();
