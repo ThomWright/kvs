@@ -7,8 +7,6 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::BufReader;
 use std::io::BufWriter;
-use std::io::Seek;
-use std::io::SeekFrom;
 use std::io::Write;
 use std::path::PathBuf;
 
@@ -43,7 +41,7 @@ pub fn new_reader(dir: &PathBuf, id: Id) -> Result<BufReader<File>> {
 #[derive(Debug)]
 pub struct KvsWriter {
     pub id: Id,
-    offset: u64,
+    pub offset: u64,
     writer: BufWriter<File>,
 }
 
@@ -64,17 +62,17 @@ impl KvsWriter {
             writer,
         })
     }
+}
 
-    /// Writes to the log file, returning the position the log was written to.
-    pub fn write_log(&mut self, buf: &[u8]) -> Result<u64> {
-        self.offset = self.writer.seek(SeekFrom::End(0))?;
-        let write_pos = self.offset;
+impl Write for KvsWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let bytes_written = self.writer.write(&buf)?;
+        self.offset += bytes_written as u64;
 
-        let written = self.writer.write(&buf)?;
-        self.offset += written as u64;
+        Ok(bytes_written)
+    }
 
-        self.writer.flush()?;
-
-        Ok(write_pos)
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.writer.flush()
     }
 }

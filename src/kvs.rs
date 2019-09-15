@@ -11,8 +11,10 @@ use std::convert::TryInto;
 use std::fs;
 use std::fs::File;
 use std::io::BufReader;
+use std::io::Read;
 use std::io::Seek;
 use std::io::SeekFrom;
+use std::io::Write;
 use std::path::PathBuf;
 
 /// Implementation of a simple, persistent key-value store.
@@ -41,7 +43,6 @@ pub struct KvStore {
     /// Path of directory containing log files
     path: PathBuf,
     writer: KvsWriter,
-
     readers: Readers,
     index: Index,
     uncompacted: Bytes,
@@ -52,14 +53,14 @@ type Index = HashMap<String, ValueInfo>;
 
 #[derive(Debug, Clone, Copy)]
 struct ValueInfo {
+    /// Identifier for file the value is stored in
+    file_id: file::Id,
+
     /// Position of value in file
     file_offset: Bytes,
 
     /// Size of serialised command in file
     size: Bytes,
-
-    /// Identifier for file the value is stored in
-    file_id: file::Id,
 }
 
 impl KvStore {
@@ -106,46 +107,43 @@ impl KvStore {
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
         #![allow(missing_docs)]
 
-        match self.index.get(&key) {
-            None => Ok(None),
+        if let Some(&ValueInfo {
+            file_offset,
+            file_id,
+            size,
+        }) = self.index.get(&key)
+        {
+            let reader = self
+                .readers
+                .get_mut(&file_id)
+                .expect("Reader not found for file ID");
+            reader.seek(SeekFrom::Start(file_offset.0))?;
 
-            Some(&ValueInfo {
-                file_offset,
-                file_id,
-                ..
-            }) => {
-                let reader = self
-                    .readers
-                    .get_mut(&file_id)
-                    .expect("Reader not found for file ID");
-                reader.seek(SeekFrom::Start(file_offset.0))?;
-
-                let mut deserializer = serde_json::Deserializer::from_reader(reader);
-                let command = Command::deserialize(&mut deserializer)?;
-
-                let Command { key: ckey, value } = command;
-
-                if ckey == key {
-                    match value {
-                        Some(_) => Ok(value),
-                        None => Err(KvsError::UnexpectedCommand {})?,
-                    }
-                } else {
-                    Err(KvsError::UnexpectedKey {})?
-                }
+            let Command { value, .. } = serde_json::from_reader(reader.take(size.0))?;
+            match value {
+                None => Err(KvsError::UnexpectedCommand {})?,
+                Some(_) => Ok(value),
             }
+        } else {
+            Ok(None)
         }
     }
 
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
         #![allow(missing_docs)]
 
-        let ser_command = serde_json::to_vec(&Command {
-            key: key.clone(),
-            value: Some(value.clone()),
-        })?;
+        let write_pos = self.writer.offset;
 
-        let write_pos = self.writer.write_log(&ser_command)?;
+        serde_json::to_writer(
+            &mut self.writer,
+            &Command {
+                key: key.clone(),
+                value: Some(value.clone()),
+            },
+        )?;
+        self.writer.flush()?;
+
+        let cmd_len = self.writer.offset - write_pos;
 
         if let Some(ValueInfo { size, .. }) = self.index.get(&key) {
             self.uncompacted += size;
@@ -154,7 +152,7 @@ impl KvStore {
             key,
             ValueInfo {
                 file_offset: Bytes(write_pos),
-                size: Bytes(ser_command.len().try_into()?),
+                size: Bytes(cmd_len),
                 file_id: self.writer.id,
             },
         );
@@ -172,15 +170,19 @@ impl KvStore {
                 size: prev_cmd_size,
                 ..
             }) => {
-                let ser_command = serde_json::to_vec(&Command {
-                    key: key.clone(),
-                    value: None,
-                })?;
+                let write_pos = self.writer.offset;
 
-                self.writer.write_log(&ser_command)?;
+                serde_json::to_writer(
+                    &mut self.writer,
+                    &Command {
+                        key: key.clone(),
+                        value: None,
+                    },
+                )?;
+                self.writer.flush()?;
 
-                let cmd_len: Bytes = ser_command.len().try_into()?;
-                self.uncompacted = self.uncompacted + prev_cmd_size + cmd_len;
+                let cmd_len = self.writer.offset - write_pos;
+                self.uncompacted = self.uncompacted + prev_cmd_size + Bytes(cmd_len);
 
                 self.index.remove(&key);
 
@@ -203,10 +205,10 @@ struct Command {
 
 fn load_file_into_index(
     file_id: file::Id,
-    buffered_reader: &mut BufReader<File>,
+    reader: &mut BufReader<File>,
     index: &mut Index,
 ) -> Result<Bytes> {
-    let deserializer = serde_json::Deserializer::from_reader(buffered_reader);
+    let deserializer = serde_json::Deserializer::from_reader(reader);
     let mut commands = deserializer.into_iter::<Command>();
 
     let mut uncompacted = Bytes(0);
@@ -217,6 +219,7 @@ fn load_file_into_index(
 
         let Command { key, value } = command?;
 
+        // value is being overwritten
         if let Some(ValueInfo {
             size: prev_cmd_size,
             ..
@@ -226,6 +229,7 @@ fn load_file_into_index(
         }
 
         match value {
+            // Set
             Some(_) => {
                 index.insert(
                     key,
@@ -236,6 +240,7 @@ fn load_file_into_index(
                     },
                 );
             }
+            // Rm
             None => {
                 uncompacted += cmd_size;
                 index.remove(&key);
