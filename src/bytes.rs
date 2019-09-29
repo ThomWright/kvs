@@ -3,7 +3,7 @@ use std::convert::TryFrom;
 use std::convert::TryInto;
 
 /// Was this worth it? Maybe not. Maybe a type alias would have been fine.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub struct Bytes(pub u64);
 
 impl std::ops::Add<Bytes> for Bytes {

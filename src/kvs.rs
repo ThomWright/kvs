@@ -17,6 +17,8 @@ use std::io::SeekFrom;
 use std::io::Write;
 use std::path::PathBuf;
 
+const MAX_UNCOMPACTED: Bytes = Bytes(1024 * 1024);
+
 /// Implementation of a simple, persistent key-value store.
 ///
 /// The data is stored in multiple files in a single directory.
@@ -157,6 +159,10 @@ impl KvStore {
             },
         );
 
+        if self.uncompacted > MAX_UNCOMPACTED {
+            self.compact()?
+        }
+
         Ok(())
     }
 
@@ -186,9 +192,80 @@ impl KvStore {
 
                 self.index.remove(&key);
 
+                if self.uncompacted > MAX_UNCOMPACTED {
+                    self.compact()?
+                }
+
                 Ok(())
             }
         }
+    }
+
+    fn compact(&mut self) -> Result<()> {
+        // create new file to write compacted logs into
+        let compaction_file_id = self.writer.id + 1;
+        let mut compacted_log_writer = {
+            let writer = KvsWriter::new(&self.path, compaction_file_id)?;
+            self.readers.insert(
+                compaction_file_id,
+                file::new_reader(&self.path, compaction_file_id)?,
+            );
+            writer
+        };
+
+        // create new file to write new logs into
+        let new_log_writer = {
+            let file_id = self.writer.id + 2;
+            let writer = KvsWriter::new(&self.path, file_id)?;
+            self.readers
+                .insert(file_id, file::new_reader(&self.path, file_id)?);
+            writer
+        };
+
+        // switch writer
+        self.uncompacted = Bytes(0);
+        self.writer = new_log_writer;
+
+        for val_info in self.index.values_mut() {
+            if val_info.file_id == self.writer.id {
+                // we're only compacting logs in old files
+                continue;
+            }
+
+            // copy from src file to compacted log file
+            let reader = self
+                .readers
+                .get_mut(&val_info.file_id)
+                .expect("Reader not found for file ID");
+            reader.seek(SeekFrom::Start(val_info.file_offset.0))?;
+
+            let new_offset = compacted_log_writer.offset;
+
+            let bytes_copied =
+                std::io::copy(&mut reader.take(val_info.size.0), &mut compacted_log_writer)?;
+
+            // update index
+            *val_info = ValueInfo {
+                file_id: compaction_file_id,
+                file_offset: Bytes(new_offset),
+                size: Bytes(bytes_copied),
+            }
+        }
+        self.writer.flush()?;
+
+        // remove all unused files
+        let file_ids_to_rm: Vec<_> = self
+            .readers
+            .keys()
+            .filter(|&&id| id < compaction_file_id)
+            .cloned()
+            .collect();
+        for id in file_ids_to_rm {
+            self.readers.remove(&id);
+            file::remove(&self.path, id)?;
+        }
+
+        Ok(())
     }
 }
 

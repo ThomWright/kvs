@@ -31,6 +31,10 @@ pub fn get_log_file_ids(kvs_dir: &PathBuf) -> Result<Vec<Id>> {
         .collect::<Result<Vec<Id>>>()
 }
 
+pub fn remove(kvs_dir: &PathBuf, id: Id) -> Result<()> {
+    Ok(fs::remove_file(kvs_dir.join(format_name(id)))?)
+}
+
 pub fn new_reader(dir: &PathBuf, id: Id) -> Result<BufReader<File>> {
     let file_path = dir.join(format_name(id));
     Ok(BufReader::new(
