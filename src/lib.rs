@@ -14,11 +14,22 @@
 )]
 #![warn(clippy::module_name_repetitions)]
 
+#[macro_use]
+extern crate slog;
+
 mod bytes;
+mod client;
+mod engine;
 mod errors;
 mod file;
-mod kvs;
+mod network_data;
+mod server;
+mod sled;
+mod store;
 
-pub use crate::kvs::KvStore;
-pub use errors::KvsError;
-pub use errors::Result;
+pub use client::KvsClient;
+pub use client::Error as ClientError;
+pub use engine::KvsEngine;
+pub use errors::{KvsError, Result};
+pub use server::{EngineType, KvsServer};
+pub use store::KvStore;

@@ -26,7 +26,7 @@ pub fn get_log_file_ids(kvs_dir: &PathBuf) -> Result<Vec<Id>> {
         .map(|file_stem| {
             Ok(file_stem
                 .parse::<Id>()
-                .map_err(|_| KvsError::UnexpectedFileName {})?)
+                .map_err(|_| KvsError::UnexpectedFileName)?)
         })
         .collect::<Result<Vec<Id>>>()
 }
