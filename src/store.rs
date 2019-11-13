@@ -1,9 +1,8 @@
 use crate::bytes::Bytes;
 use crate::engine::KvsEngine;
+use crate::errors::KvsError;
 use crate::file;
-use crate::file::get_log_file_ids;
-use crate::file::KvsWriter;
-use crate::KvsError;
+use crate::file::{get_log_file_ids, KvsWriter};
 use crate::Result;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -18,7 +17,7 @@ use std::io::SeekFrom;
 use std::io::Write;
 use std::path::PathBuf;
 
-pub(crate) const KVS_DIR: &str = ".kvs";
+pub const KVS_DIR: &str = ".kvs";
 const MAX_UNCOMPACTED: Bytes = Bytes(1024 * 1024);
 
 /// Implementation of a simple, persistent key-value store.

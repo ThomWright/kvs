@@ -1,4 +1,4 @@
-use crate::KvsError;
+use crate::errors::KvsError;
 use crate::Result;
 use std::ffi::OsStr;
 use std::ffi::OsString;

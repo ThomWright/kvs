@@ -27,10 +27,8 @@ mod server;
 mod sled;
 mod store;
 
-pub use client::KvsClient;
-pub use client::Error as ClientError;
-pub use engine::KvsEngine;
-pub use errors::{KvsError, Result};
-pub use server::{EngineType, KvsServer};
-pub use store::KvStore;
-pub use sled::SledKvsEngine;
+pub use self::client::KvsClient;
+pub use self::engine::KvsEngine;
+pub use self::errors::Result;
+pub use self::server::{EngineType, KvsServer};
+pub use self::store::KvStore;

@@ -1,10 +1,10 @@
+use crate::errors::KvsError;
 use crate::KvsEngine;
-use crate::KvsError;
 use crate::Result;
 use std::fs;
 use std::path::PathBuf;
 
-pub(crate) const SLED_DIR: &str = ".sled";
+pub const SLED_DIR: &str = ".sled";
 
 /// Implementation of a simple, persistent key-value store using `sled`.
 #[derive(Debug, Copy, Clone)]
