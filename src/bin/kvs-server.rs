@@ -6,6 +6,7 @@ extern crate slog_term;
 use clap::{crate_version, App, Arg};
 use kvs::{EngineType, KvsServer};
 use slog::Drain;
+use std::env;
 
 fn main() -> kvs::Result<()> {
     if let Err(e) = run_kvs() {
@@ -56,7 +57,7 @@ fn run_kvs() -> kvs::Result<()> {
     });
 
     // TODO: move into KvsServer?
-    let engine = match (engine_arg, KvsServer::existing_engine()) {
+    let engine = match (engine_arg, KvsServer::existing_engine(&env::current_dir()?)) {
         (None, None) => Ok(EngineType::Kvs),
         (Some(engine_arg), None) => Ok(engine_arg),
         (None, Some(current_engine)) => Ok(current_engine),

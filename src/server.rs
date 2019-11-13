@@ -1,5 +1,7 @@
 use crate::network_data::{ErrorType, NetworkCommand, NetworkResponse};
-use crate::{KvStore, KvsEngine, KvsError, Result};
+use crate::sled::SLED_DIR;
+use crate::store::KVS_DIR;
+use crate::{KvStore, KvsEngine, KvsError, Result, SledKvsEngine};
 use serde_json;
 use slog;
 use slog::Logger;
@@ -8,6 +10,7 @@ use std::fmt::Display;
 use std::io::BufReader;
 use std::io::BufWriter;
 use std::net::{TcpListener, ToSocketAddrs};
+use std::path;
 
 use std::io::Write;
 
@@ -55,14 +58,14 @@ impl KvsServer {
         engine_type: EngineType,
     ) -> Result<KvsServer> {
         let curr_dir = std::env::current_dir()?;
-        let engine = match engine_type {
-            EngineType::Kvs => KvStore::open(&curr_dir)?,
-            EngineType::Sled => unimplemented!(),
+        let engine: Box<dyn KvsEngine> = match engine_type {
+            EngineType::Kvs => Box::new(KvStore::open(&curr_dir)?),
+            EngineType::Sled => Box::new(SledKvsEngine::open(&curr_dir)?),
         };
         Ok(KvsServer {
             socket: TcpListener::bind(addr)?,
             log,
-            engine: Box::new(engine),
+            engine: engine,
         })
     }
 
@@ -139,8 +142,13 @@ impl KvsServer {
     }
 
     /// Is there existing data from one of the engines?
-    pub fn existing_engine() -> Option<EngineType> {
-        // FIXME:
-        Some(EngineType::Kvs)
+    pub fn existing_engine(dir: &path::PathBuf) -> Option<EngineType> {
+        if path::Path::new(&dir.join(KVS_DIR)).exists() {
+            return Some(EngineType::Kvs);
+        }
+        if path::Path::new(&dir.join(SLED_DIR)).exists() {
+            return Some(EngineType::Sled);
+        }
+        None
     }
 }

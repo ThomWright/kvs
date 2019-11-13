@@ -18,6 +18,7 @@ use std::io::SeekFrom;
 use std::io::Write;
 use std::path::PathBuf;
 
+pub(crate) const KVS_DIR: &str = ".kvs";
 const MAX_UNCOMPACTED: Bytes = Bytes(1024 * 1024);
 
 /// Implementation of a simple, persistent key-value store.
@@ -32,6 +33,7 @@ const MAX_UNCOMPACTED: Bytes = Bytes(1024 * 1024);
 /// Setting and retrieving a value for the key `key`.
 ///
 /// ```
+/// # use crate::kvs::KvsEngine;
 /// let mut store = kvs::KvStore::open(".")?;
 ///
 /// let key = "key".to_owned();
@@ -75,7 +77,7 @@ impl KvStore {
         if !path_dir.is_dir() {
             return Err(KvsError::NotADirectory.into());
         }
-        let kvs_dir = path_dir.join(".kvs");
+        let kvs_dir = path_dir.join(KVS_DIR);
 
         fs::create_dir_all(&kvs_dir)?;
 

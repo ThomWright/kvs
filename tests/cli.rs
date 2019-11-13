@@ -172,7 +172,6 @@ fn cli_log_configuration() {
 }
 
 #[test]
-#[ignore]
 fn cli_wrong_engine() {
     // sled first, kvs second
     {
@@ -333,6 +332,7 @@ fn cli_access_server_kvs_engine() {
 }
 
 #[test]
+#[ignore]
 fn cli_access_server_sled_engine() {
     cli_access_server("sled", "127.0.0.1:4005");
 }

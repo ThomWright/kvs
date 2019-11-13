@@ -33,3 +33,4 @@ pub use engine::KvsEngine;
 pub use errors::{KvsError, Result};
 pub use server::{EngineType, KvsServer};
 pub use store::KvStore;
+pub use sled::SledKvsEngine;
