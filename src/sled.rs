@@ -1,15 +1,19 @@
 use crate::errors::KvsError;
 use crate::KvsEngine;
 use crate::Result;
+use sled::Db;
 use std::fs;
 use std::path::PathBuf;
+use std::str;
 
 pub const SLED_DIR: &str = ".sled";
 
 /// Implementation of a simple, persistent key-value store using `sled`.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 #[allow(clippy::module_name_repetitions)]
-pub struct SledKvsEngine {}
+pub struct SledKvsEngine {
+    db: Db,
+}
 
 impl SledKvsEngine {
     /// Create a new sled store inside the given `path` directory.
@@ -18,24 +22,37 @@ impl SledKvsEngine {
         if !path_dir.is_dir() {
             return Err(KvsError::NotADirectory.into());
         }
-        let kvs_dir = path_dir.join(SLED_DIR);
+        let sled_dir = path_dir.join(SLED_DIR);
 
-        fs::create_dir_all(&kvs_dir)?;
+        fs::create_dir_all(&sled_dir)?;
 
-        Ok(SledKvsEngine {})
+        let db = Db::open(sled_dir)?;
+
+        Ok(SledKvsEngine { db })
     }
 }
 
 impl KvsEngine for SledKvsEngine {
     fn get(&mut self, key: String) -> Result<Option<String>> {
-        unimplemented!();
+        match self.db.get(key)? {
+            None => Ok(None),
+            Some(buf) => Ok(Some(String::from_utf8(buf.to_vec())?)),
+        }
     }
 
     fn set(&mut self, key: String, value: String) -> Result<()> {
-        unimplemented!()
+        self.db.insert(key, value.into_bytes())?;
+        self.db.flush()?;
+        Ok(())
     }
 
     fn remove(&mut self, key: String) -> Result<()> {
-        unimplemented!()
+        match self.db.remove(key)? {
+            None => Err(KvsError::KeyNotFound.into()),
+            Some(_) => {
+                self.db.flush()?;
+                Ok(())
+            }
+        }
     }
 }
