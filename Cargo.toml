@@ -5,6 +5,19 @@ authors = ["Thom Wright <dev@thomwright.co.uk>"]
 edition = "2018"
 description = "A key-value store"
 
+[[bin]]
+name = "kvs-client"
+path = "src/bin/kvs-client.rs"
+bench = false
+
+[[bin]]
+name = "kvs-server"
+path = "src/bin/kvs-server.rs"
+bench = false
+
+[lib]
+bench = false
+
 [dependencies]
 clap = "~2.33.0"
 failure = "~0.1.5"
@@ -21,3 +34,7 @@ predicates = "~1.0.0"
 rand = "~0.7.2"
 tempfile = "~3.0.7"
 walkdir = "~2.2.7"
+
+[[bench]]
+name = "benches"
+harness = false

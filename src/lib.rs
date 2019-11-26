@@ -32,3 +32,4 @@ pub use self::engine::KvsEngine;
 pub use self::errors::Result;
 pub use self::server::{EngineType, KvsServer};
 pub use self::store::KvStore;
+pub use self::sled::SledKvsEngine;
