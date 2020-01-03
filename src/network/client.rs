@@ -1,4 +1,4 @@
-use crate::network_data::{ErrorType, NetworkCommand, NetworkResponse};
+use super::data::{ErrorType, NetworkCommand, NetworkResponse};
 use crate::Result;
 use std::net::{TcpStream, ToSocketAddrs};
 

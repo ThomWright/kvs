@@ -1,8 +1,8 @@
-use crate::engine::KvsEngine;
+use super::data::{ErrorType, NetworkCommand, NetworkResponse};
+use crate::engines::KvsEngine;
+use crate::engines::KVS_DIR;
+use crate::engines::SLED_DIR;
 use crate::errors::KvsError;
-use crate::network_data::{ErrorType, NetworkCommand, NetworkResponse};
-use crate::sled::SLED_DIR;
-use crate::store::KVS_DIR;
 use crate::Result;
 use serde_json;
 use slog;
@@ -14,34 +14,6 @@ use std::io::BufWriter;
 use std::io::Write;
 use std::net::{TcpListener, ToSocketAddrs};
 use std::path;
-
-#[allow(missing_docs)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EngineType {
-    Kvs,
-    Sled,
-}
-impl Display for EngineType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            EngineType::Kvs => write!(f, "kvs"),
-            EngineType::Sled => write!(f, "sled"),
-        }
-    }
-}
-impl slog::Value for EngineType {
-    fn serialize(
-        &self,
-        _rec: &slog::Record,
-        key: slog::Key,
-        serializer: &mut dyn slog::Serializer,
-    ) -> slog::Result {
-        match self {
-            EngineType::Kvs => serializer.emit_str(key, "kvs"),
-            EngineType::Sled => serializer.emit_str(key, "sled"),
-        }
-    }
-}
 
 /// Listens for KVS commands over a TCP connection.
 #[allow(clippy::module_name_repetitions, missing_debug_implementations)]
@@ -133,6 +105,34 @@ where
                     },
                 },
             },
+        }
+    }
+}
+
+#[allow(missing_docs)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineType {
+    Kvs,
+    Sled,
+}
+impl Display for EngineType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EngineType::Kvs => write!(f, "kvs"),
+            EngineType::Sled => write!(f, "sled"),
+        }
+    }
+}
+impl slog::Value for EngineType {
+    fn serialize(
+        &self,
+        _rec: &slog::Record,
+        key: slog::Key,
+        serializer: &mut dyn slog::Serializer,
+    ) -> slog::Result {
+        match self {
+            EngineType::Kvs => serializer.emit_str(key, "kvs"),
+            EngineType::Sled => serializer.emit_str(key, "sled"),
         }
     }
 }

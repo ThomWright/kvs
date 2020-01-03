@@ -1,3 +1,11 @@
+//! Implementations of the `KvsEngine` trait.
+
+mod sled;
+mod kvs;
+
+pub use self::sled::{SledKvsEngine, SLED_DIR};
+pub use self::kvs::{KvStore, KVS_DIR};
+
 use crate::Result;
 
 /// Interface for a simple key-value store.

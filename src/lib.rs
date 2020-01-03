@@ -16,20 +16,14 @@
 #[macro_use]
 extern crate slog;
 
-mod bytes;
-mod client;
-mod engine;
+mod engines;
 mod errors;
-mod file;
-mod network_data;
-mod server;
-mod sled;
-mod store;
+mod network;
 pub mod thread_pool;
 
-pub use self::client::KvsClient;
-pub use self::engine::KvsEngine;
+pub use self::network::KvsClient;
+pub use self::engines::SledKvsEngine;
+pub use self::engines::KvStore;
+pub use self::engines::KvsEngine;
 pub use self::errors::Result;
-pub use self::server::{existing_engine, EngineType, KvsServer};
-pub use self::sled::SledKvsEngine;
-pub use self::store::KvStore;
+pub use self::network::{existing_engine, EngineType, KvsServer};

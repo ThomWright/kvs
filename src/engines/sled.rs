@@ -1,5 +1,5 @@
+use super::KvsEngine;
 use crate::errors::KvsError;
-use crate::KvsEngine;
 use crate::Result;
 use sled::Db;
 use std::fs;
