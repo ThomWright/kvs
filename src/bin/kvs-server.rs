@@ -4,7 +4,7 @@ extern crate slog;
 extern crate slog_term;
 
 use clap::{crate_version, App, Arg};
-use kvs::{EngineType, KvsServer};
+use kvs::{EngineType, KvStore, KvsServer, SledKvsEngine, existing_engine};
 use slog::Drain;
 use std::env;
 
@@ -57,7 +57,7 @@ fn run_kvs() -> kvs::Result<()> {
     });
 
     // TODO: move into KvsServer?
-    let engine = match (engine_arg, KvsServer::existing_engine(&env::current_dir()?)) {
+    let engine_type = match (engine_arg, existing_engine(&env::current_dir()?)) {
         (None, None) => Ok(EngineType::Kvs),
         (Some(engine_arg), None) => Ok(engine_arg),
         (None, Some(current_engine)) => Ok(current_engine),
@@ -70,12 +70,22 @@ fn run_kvs() -> kvs::Result<()> {
         }
     }?;
 
-    info!(log, "Starting kvs server"; "addr" => addr, "engine" => engine);
+    info!(log, "Starting kvs server"; "addr" => addr, "engine" => engine_type);
 
-    let mut server = KvsServer::new(addr, log, engine)?;
-    server.start();
+    let curr_dir = std::env::current_dir()?;
+    match engine_type {
+        EngineType::Kvs => {
+            let mut server = KvsServer::bind(addr, log, KvStore::open(&curr_dir)?)?;
+            server.start();
+            Ok(())
+        }
 
-    Ok(())
+        EngineType::Sled => {
+            let mut server = KvsServer::bind(addr, log, SledKvsEngine::open(&curr_dir)?)?;
+            server.start();
+            Ok(())
+        }
+    }
 }
 
 #[derive(Debug, failure::Fail)]

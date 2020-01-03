@@ -3,7 +3,6 @@ use clap::{crate_version, App, AppSettings, Arg, SubCommand};
 use failure;
 use kvs;
 use kvs::KvsClient;
-use kvs::KvsEngine;
 use std::env;
 
 fn main() -> kvs::Result<()> {
@@ -69,7 +68,7 @@ fn run_kvs() -> kvs::Result<()> {
         ("get", Some(command_matches)) => match command_matches.value_of("key") {
             Some(key) => {
                 let address = command_matches.value_of("addr").unwrap();
-                let mut client = KvsClient::new(address)?;
+                let client = KvsClient::connect(address)?;
                 match client.get(key.to_string())? {
                     None => println!("Key not found"),
                     Some(value) => println!("{}", value),
@@ -84,7 +83,7 @@ fn run_kvs() -> kvs::Result<()> {
         ) {
             (Some(key), Some(value)) => {
                 let address = command_matches.value_of("addr").unwrap();
-                let mut client = KvsClient::new(address)?;
+                let client = KvsClient::connect(address)?;
                 client.set(key.to_string(), value.to_string())
             }
             _ => Err(KvsClientCliError::UnexpectedArgs.into()),
@@ -92,7 +91,7 @@ fn run_kvs() -> kvs::Result<()> {
         ("rm", Some(command_matches)) => match command_matches.value_of("key") {
             Some(key) => {
                 let address = command_matches.value_of("addr").unwrap();
-                let mut client = KvsClient::new(address)?;
+                let client = KvsClient::connect(address)?;
                 client.remove(key.to_string())
             }
             _ => Err(KvsClientCliError::UnexpectedArgs.into()),

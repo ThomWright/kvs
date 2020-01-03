@@ -5,6 +5,7 @@ use sled::Db;
 use std::fs;
 use std::path::PathBuf;
 use std::str;
+use std::sync::{Arc, Mutex};
 
 pub const SLED_DIR: &str = ".sled";
 
@@ -12,7 +13,7 @@ pub const SLED_DIR: &str = ".sled";
 #[derive(Debug, Clone)]
 #[allow(clippy::module_name_repetitions)]
 pub struct SledKvsEngine {
-    db: Db,
+    db: Arc<Mutex<Db>>,
 }
 
 impl SledKvsEngine {
@@ -28,29 +29,37 @@ impl SledKvsEngine {
 
         let db = Db::open(sled_dir)?;
 
-        Ok(SledKvsEngine { db })
+        Ok(SledKvsEngine {
+            db: Arc::new(Mutex::new(db)),
+        })
     }
 }
 
 impl KvsEngine for SledKvsEngine {
-    fn get(&mut self, key: String) -> Result<Option<String>> {
-        match self.db.get(key)? {
+    fn get(&self, key: String) -> Result<Option<String>> {
+        let store = self.db.lock().unwrap();
+
+        match store.get(key)? {
             None => Ok(None),
             Some(buf) => Ok(Some(String::from_utf8(buf.to_vec())?)),
         }
     }
 
-    fn set(&mut self, key: String, value: String) -> Result<()> {
-        self.db.insert(key, value.into_bytes())?;
-        self.db.flush()?;
+    fn set(&self, key: String, value: String) -> Result<()> {
+        let store = self.db.lock().unwrap();
+
+        store.insert(key, value.into_bytes())?;
+        store.flush()?;
         Ok(())
     }
 
-    fn remove(&mut self, key: String) -> Result<()> {
-        match self.db.remove(key)? {
+    fn remove(&self, key: String) -> Result<()> {
+        let store = self.db.lock().unwrap();
+
+        match store.remove(key)? {
             None => Err(KvsError::KeyNotFound.into()),
             Some(_) => {
-                self.db.flush()?;
+                store.flush()?;
                 Ok(())
             }
         }

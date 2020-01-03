@@ -4,7 +4,6 @@
 #![deny(
     missing_debug_implementations,
     missing_copy_implementations,
-    missing_docs,
     trivial_casts,
     trivial_numeric_casts,
     unsafe_code,
@@ -12,7 +11,7 @@
     unused_import_braces,
     unused_qualifications
 )]
-#![warn(clippy::module_name_repetitions)]
+#![warn(clippy::module_name_repetitions, missing_docs)]
 
 #[macro_use]
 extern crate slog;
@@ -26,10 +25,11 @@ mod network_data;
 mod server;
 mod sled;
 mod store;
+pub mod thread_pool;
 
 pub use self::client::KvsClient;
 pub use self::engine::KvsEngine;
 pub use self::errors::Result;
-pub use self::server::{EngineType, KvsServer};
-pub use self::store::KvStore;
+pub use self::server::{existing_engine, EngineType, KvsServer};
 pub use self::sled::SledKvsEngine;
+pub use self::store::KvStore;

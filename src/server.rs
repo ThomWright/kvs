@@ -1,8 +1,8 @@
 use crate::engine::KvsEngine;
 use crate::errors::KvsError;
 use crate::network_data::{ErrorType, NetworkCommand, NetworkResponse};
-use crate::sled::{SledKvsEngine, SLED_DIR};
-use crate::store::{KvStore, KVS_DIR};
+use crate::sled::SLED_DIR;
+use crate::store::KVS_DIR;
 use crate::Result;
 use serde_json;
 use slog;
@@ -11,10 +11,9 @@ use std::fmt;
 use std::fmt::Display;
 use std::io::BufReader;
 use std::io::BufWriter;
+use std::io::Write;
 use std::net::{TcpListener, ToSocketAddrs};
 use std::path;
-
-use std::io::Write;
 
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,28 +45,22 @@ impl slog::Value for EngineType {
 
 /// Listens for KVS commands over a TCP connection.
 #[allow(clippy::module_name_repetitions, missing_debug_implementations)]
-pub struct KvsServer {
+pub struct KvsServer<T: KvsEngine> {
     socket: TcpListener,
     log: Logger,
-    engine: Box<dyn KvsEngine>,
+    engine: T,
 }
 
-impl KvsServer {
+impl<T> KvsServer<T>
+where
+    T: KvsEngine,
+{
     /// Create a new KVS server bound to addr
-    pub fn new<A: ToSocketAddrs>(
-        addr: A,
-        log: Logger,
-        engine_type: EngineType,
-    ) -> Result<KvsServer> {
-        let curr_dir = std::env::current_dir()?;
-        let engine: Box<dyn KvsEngine> = match engine_type {
-            EngineType::Kvs => Box::new(KvStore::open(&curr_dir)?),
-            EngineType::Sled => Box::new(SledKvsEngine::open(&curr_dir)?),
-        };
+    pub fn bind<A: ToSocketAddrs>(addr: A, log: Logger, engine: T) -> Result<KvsServer<T>> {
         Ok(KvsServer {
             socket: TcpListener::bind(addr)?,
             log,
-            engine: engine,
+            engine,
         })
     }
 
@@ -142,15 +135,15 @@ impl KvsServer {
             },
         }
     }
+}
 
-    /// Is there existing data from one of the engines?
-    pub fn existing_engine(dir: &path::PathBuf) -> Option<EngineType> {
-        if path::Path::new(&dir.join(KVS_DIR)).exists() {
-            return Some(EngineType::Kvs);
-        }
-        if path::Path::new(&dir.join(SLED_DIR)).exists() {
-            return Some(EngineType::Sled);
-        }
-        None
+/// Is there existing data from one of the engines?
+pub fn existing_engine(dir: &path::PathBuf) -> Option<EngineType> {
+    if path::Path::new(&dir.join(KVS_DIR)).exists() {
+        return Some(EngineType::Kvs);
     }
+    if path::Path::new(&dir.join(SLED_DIR)).exists() {
+        return Some(EngineType::Sled);
+    }
+    None
 }

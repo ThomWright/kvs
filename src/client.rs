@@ -1,4 +1,3 @@
-use crate::engine::KvsEngine;
 use crate::network_data::{ErrorType, NetworkCommand, NetworkResponse};
 use crate::Result;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -12,15 +11,13 @@ pub struct KvsClient {
 
 impl KvsClient {
     /// Create a connection to the KVS server.
-    pub fn new<A: ToSocketAddrs>(addr: A) -> Result<KvsClient> {
+    pub fn connect<A: ToSocketAddrs>(addr: A) -> Result<KvsClient> {
         Ok(KvsClient {
             connection: TcpStream::connect(addr)?,
         })
     }
-}
-
-impl KvsEngine for KvsClient {
-    fn get(&mut self, key: String) -> Result<Option<String>> {
+    #[allow(missing_docs)]
+    pub fn get(self, key: String) -> Result<Option<String>> {
         serde_json::to_writer(&self.connection, &NetworkCommand::Get { key })?;
         let mut responses =
             serde_json::Deserializer::from_reader(&self.connection).into_iter::<NetworkResponse>();
@@ -37,8 +34,8 @@ impl KvsEngine for KvsClient {
             None => Err((Error::NoResponse).into()),
         }
     }
-
-    fn set(&mut self, key: String, value: String) -> Result<()> {
+    #[allow(missing_docs)]
+    pub fn set(self, key: String, value: String) -> Result<()> {
         serde_json::to_writer(&self.connection, &NetworkCommand::Set { key, value })?;
         let mut responses =
             serde_json::Deserializer::from_reader(&self.connection).into_iter::<NetworkResponse>();
@@ -55,7 +52,8 @@ impl KvsEngine for KvsClient {
             None => Err((Error::NoResponse).into()),
         }
     }
-    fn remove(&mut self, key: String) -> Result<()> {
+    #[allow(missing_docs)]
+    pub fn remove(self, key: String) -> Result<()> {
         serde_json::to_writer(&self.connection, &NetworkCommand::Rm { key })?;
         let mut responses =
             serde_json::Deserializer::from_reader(&self.connection).into_iter::<NetworkResponse>();

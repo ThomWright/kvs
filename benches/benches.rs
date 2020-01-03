@@ -8,6 +8,11 @@ use rand::distributions::Standard;
 use rand::Rng;
 use tempfile::TempDir;
 
+enum Engine {
+    Kvs(KvStore),
+    Sled(SledKvsEngine),
+}
+
 fn write(c: &mut Criterion) {
     let mut group = c.benchmark_group("write");
 
@@ -20,11 +25,11 @@ fn write(c: &mut Criterion) {
                     || {
                         let temp_dir =
                             TempDir::new().expect("unable to create temporary working directory");
-                        let store: Box<dyn KvsEngine> = match engine_type {
-                            EngineType::Kvs => Box::new(
+                        let store: Engine = match engine_type {
+                            EngineType::Kvs => Engine::Kvs(
                                 KvStore::open(temp_dir.path()).expect("unable to open KvStore"),
                             ),
-                            EngineType::Sled => Box::new(
+                            EngineType::Sled => Engine::Sled(
                                 SledKvsEngine::open(temp_dir.path())
                                     .expect("unable to open SledKvsEngine"),
                             ),
@@ -34,8 +39,11 @@ fn write(c: &mut Criterion) {
                         let value = gen_random_string();
                         (store, key.clone(), value.clone())
                     },
-                    |(mut store, key, value)| {
-                        store.set(key, value).unwrap();
+                    |(store, key, value)| {
+                        match store {
+                            Engine::Kvs(ref s) => s.set(key, value).unwrap(),
+                            Engine::Sled(ref s) => s.set(key, value).unwrap(),
+                        };
                     },
                     BatchSize::SmallInput,
                 )
@@ -58,11 +66,11 @@ fn read(c: &mut Criterion) {
                     || {
                         let temp_dir =
                             TempDir::new().expect("unable to create temporary working directory");
-                        let mut store: Box<dyn KvsEngine> = match engine_type {
-                            EngineType::Kvs => Box::new(
+                        let store: Engine = match engine_type {
+                            EngineType::Kvs => Engine::Kvs(
                                 KvStore::open(temp_dir.path()).expect("unable to open KvStore"),
                             ),
-                            EngineType::Sled => Box::new(
+                            EngineType::Sled => Engine::Sled(
                                 SledKvsEngine::open(temp_dir.path())
                                     .expect("unable to open SledKvsEngine"),
                             ),
@@ -71,12 +79,18 @@ fn read(c: &mut Criterion) {
                         let key = gen_random_string();
                         let value = gen_random_string();
 
-                        store.set(key.clone(), value).unwrap();
+                        match store {
+                            Engine::Kvs(ref s) => s.set(key.clone(), value).unwrap(),
+                            Engine::Sled(ref s) => s.set(key.clone(), value).unwrap(),
+                        };
 
                         (store, key.clone())
                     },
-                    |(mut store, key)| {
-                        store.get(key).unwrap();
+                    |(store, key)| {
+                        match store {
+                            Engine::Kvs(s) => s.get(key).unwrap(),
+                            Engine::Sled(s) => s.get(key).unwrap(),
+                        };
                     },
                     BatchSize::SmallInput,
                 )

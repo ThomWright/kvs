@@ -16,6 +16,7 @@ use std::io::Seek;
 use std::io::SeekFrom;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 pub const KVS_DIR: &str = ".kvs";
 const MAX_UNCOMPACTED: Bytes = Bytes(1024 * 1024);
@@ -43,8 +44,25 @@ const MAX_UNCOMPACTED: Bytes = Bytes(1024 * 1024);
 /// # Ok::<(), failure::Error>(())
 /// ```
 #[allow(clippy::module_name_repetitions)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct KvStore {
+    store: Arc<Mutex<InternalKvStore>>,
+}
+
+impl KvStore {
+    /// Create a new KvStore, using the given `path` directory.
+    /// The log files will be stored in a directory named `.kvs` inside `path`.
+    pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
+        let store = InternalKvStore::open(path)?;
+        Ok(KvStore {
+            store: Arc::new(Mutex::new(store)),
+        })
+    }
+}
+
+#[allow(clippy::module_name_repetitions)]
+#[derive(Debug)]
+struct InternalKvStore {
     /// Path of directory containing log files
     path: PathBuf,
     writer: KvsWriter,
@@ -68,10 +86,8 @@ struct ValueInfo {
     size: Bytes,
 }
 
-impl KvStore {
-    /// Create a new KvStore, using the given `path` directory.
-    /// The log files will be stored in a directory named `.kvs` inside `path`.
-    pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
+impl InternalKvStore {
+    fn open(path: impl Into<PathBuf>) -> Result<InternalKvStore> {
         let path_dir = path.into();
         if !path_dir.is_dir() {
             return Err(KvsError::NotADirectory.into());
@@ -99,7 +115,7 @@ impl KvStore {
         let writer = KvsWriter::new(&kvs_dir, write_file_id)?;
         readers.insert(write_file_id, file::new_reader(&kvs_dir, write_file_id)?);
 
-        Ok(KvStore {
+        Ok(InternalKvStore {
             path: kvs_dir,
             writer,
             readers,
@@ -178,14 +194,16 @@ impl KvStore {
 }
 
 impl KvsEngine for KvStore {
-    fn get(&mut self, key: String) -> Result<Option<String>> {
+    fn get(&self, key: String) -> Result<Option<String>> {
+        let mut store = self.store.lock().unwrap();
+
         if let Some(&ValueInfo {
             file_offset,
             file_id,
             size,
-        }) = self.index.get(&key)
+        }) = store.index.get(&key)
         {
-            let reader = self
+            let reader = store
                 .readers
                 .get_mut(&file_id)
                 .expect("Reader not found for file ID");
@@ -201,65 +219,71 @@ impl KvsEngine for KvStore {
         }
     }
 
-    fn set(&mut self, key: String, value: String) -> Result<()> {
-        let write_pos = self.writer.offset;
+    fn set(&self, key: String, value: String) -> Result<()> {
+        let mut store = self.store.lock().unwrap();
+
+        let write_pos = store.writer.offset;
 
         serde_json::to_writer(
-            &mut self.writer,
+            &mut store.writer,
             &Command {
                 key: key.clone(),
                 value: Some(value.clone()),
             },
         )?;
-        self.writer.flush()?;
+        store.writer.flush()?;
 
-        let cmd_len = self.writer.offset - write_pos;
+        let cmd_len = store.writer.offset - write_pos;
 
-        if let Some(ValueInfo { size, .. }) = self.index.get(&key) {
-            self.uncompacted += size;
+        if let Some(&ValueInfo { size, .. }) = store.index.get(&key) {
+            store.uncompacted += size;
         }
-        self.index.insert(
+
+        let writer_id = store.writer.id;
+        store.index.insert(
             key,
             ValueInfo {
                 file_offset: Bytes(write_pos),
                 size: Bytes(cmd_len),
-                file_id: self.writer.id,
+                file_id: writer_id,
             },
         );
 
-        if self.uncompacted > MAX_UNCOMPACTED {
-            self.compact()?
+        if store.uncompacted > MAX_UNCOMPACTED {
+            store.compact()?
         }
 
         Ok(())
     }
 
-    fn remove(&mut self, key: String) -> Result<()> {
-        match self.index.get(&key) {
+    fn remove(&self, key: String) -> Result<()> {
+        let mut store = self.store.lock().unwrap();
+
+        match store.index.get(&key) {
             None => Err(KvsError::KeyNotFound.into()),
 
-            Some(ValueInfo {
+            Some(&ValueInfo {
                 size: prev_cmd_size,
                 ..
             }) => {
-                let write_pos = self.writer.offset;
+                let write_pos = store.writer.offset;
 
                 serde_json::to_writer(
-                    &mut self.writer,
+                    &mut store.writer,
                     &Command {
                         key: key.clone(),
                         value: None,
                     },
                 )?;
-                self.writer.flush()?;
+                store.writer.flush()?;
 
-                let cmd_len = self.writer.offset - write_pos;
-                self.uncompacted = self.uncompacted + prev_cmd_size + Bytes(cmd_len);
+                let cmd_len = store.writer.offset - write_pos;
+                store.uncompacted = store.uncompacted + prev_cmd_size + Bytes(cmd_len);
 
-                self.index.remove(&key);
+                store.index.remove(&key);
 
-                if self.uncompacted > MAX_UNCOMPACTED {
-                    self.compact()?
+                if store.uncompacted > MAX_UNCOMPACTED {
+                    store.compact()?
                 }
 
                 Ok(())
