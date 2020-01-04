@@ -4,7 +4,7 @@ extern crate slog;
 extern crate slog_term;
 
 use clap::{crate_version, App, Arg};
-use kvs::{EngineType, KvStore, KvsServer, SledKvsEngine, existing_engine};
+use kvs::{existing_engine, EngineType, KvStore, KvsServer, SledKvsEngine};
 use slog::Drain;
 use std::env;
 
@@ -75,14 +75,14 @@ fn run_kvs() -> kvs::Result<()> {
     let curr_dir = std::env::current_dir()?;
     match engine_type {
         EngineType::Kvs => {
-            let mut server = KvsServer::bind(addr, log, KvStore::open(&curr_dir)?)?;
-            server.start();
+            let server = KvsServer::new(log, KvStore::open(&curr_dir)?)?;
+            server.run(addr)?;
             Ok(())
         }
 
         EngineType::Sled => {
-            let mut server = KvsServer::bind(addr, log, SledKvsEngine::open(&curr_dir)?)?;
-            server.start();
+            let server = KvsServer::new(log, SledKvsEngine::open(&curr_dir)?)?;
+            server.run(addr)?;
             Ok(())
         }
     }

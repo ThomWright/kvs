@@ -12,13 +12,12 @@ use std::fmt::Display;
 use std::io::BufReader;
 use std::io::BufWriter;
 use std::io::Write;
-use std::net::{TcpListener, ToSocketAddrs};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path;
 
 /// Listens for KVS commands over a TCP connection.
 #[allow(clippy::module_name_repetitions, missing_debug_implementations)]
 pub struct KvsServer<T: KvsEngine> {
-    socket: TcpListener,
     log: Logger,
     engine: T,
 }
@@ -27,55 +26,60 @@ impl<T> KvsServer<T>
 where
     T: KvsEngine,
 {
-    /// Create a new KVS server bound to addr
-    pub fn bind<A: ToSocketAddrs>(addr: A, log: Logger, engine: T) -> Result<KvsServer<T>> {
-        Ok(KvsServer {
-            socket: TcpListener::bind(addr)?,
-            log,
-            engine,
-        })
+    /// Create a new KVS server
+    pub fn new(log: Logger, engine: T) -> Result<KvsServer<T>> {
+        Ok(KvsServer { log, engine })
     }
 
-    /// Start listening
-    pub fn start(&mut self) {
-        while let Some(stream) = self.socket.incoming().next() {
+    /// Bind to a socket and start listening
+    pub fn run<A: ToSocketAddrs>(&self, addr: A) -> Result<()> {
+        let listener = TcpListener::bind(addr)?;
+
+        for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {
-                    let reader = BufReader::new(&stream);
-                    let mut writer = BufWriter::new(&stream);
-                    let commands =
-                        serde_json::Deserializer::from_reader(reader).into_iter::<NetworkCommand>();
-
-                    for command in commands {
-                        match command {
-                            Err(_e) => {
-                                serde_json::to_writer(
-                                    &mut writer,
-                                    &NetworkResponse::Error {
-                                        code: ErrorType::CommandDeserialisation,
-                                    },
-                                )
-                                .expect("Failed to write to TCP stream");
-                            }
-                            Ok(c) => {
-                                let response = &self.handle_command(&c);
-
-                                serde_json::to_writer(&mut writer, response)
-                                    .expect("Failed to write to TCP stream");
-
-                                writer.flush().expect("Failed to flush TCP stream");
-                            }
-                        }
-                    }
+                    self.handle_req(&stream)?;
                 }
                 Err(_e) => {
                     warn!(self.log, "Error on connection stream");
                 }
             }
         }
+
+        Ok(())
     }
 
-    fn handle_command(&mut self, cmd: &NetworkCommand) -> NetworkResponse {
+    fn handle_req(&self, stream: &TcpStream) -> Result<()> {
+        let reader = BufReader::new(stream);
+        let mut writer = BufWriter::new(stream);
+        let commands = serde_json::Deserializer::from_reader(reader).into_iter::<NetworkCommand>();
+
+        for command in commands {
+            match command {
+                Err(_e) => {
+                    serde_json::to_writer(
+                        &mut writer,
+                        &NetworkResponse::Error {
+                            code: ErrorType::CommandDeserialisation,
+                        },
+                    )
+                    .expect("Failed to write to TCP stream");
+                }
+                Ok(c) => {
+                    let response = self.handle_command(&c);
+
+                    serde_json::to_writer(&mut writer, &response)
+                        .expect("Failed to write to TCP stream");
+
+                    writer.flush().expect("Failed to flush TCP stream");
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_command(&self, cmd: &NetworkCommand) -> NetworkResponse {
         match cmd {
             NetworkCommand::Get { key } => match self.engine.get(key.to_string()) {
                 Ok(v) => match v {
