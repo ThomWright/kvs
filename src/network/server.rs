@@ -3,6 +3,7 @@ use crate::engines::KvsEngine;
 use crate::engines::KVS_DIR;
 use crate::engines::SLED_DIR;
 use crate::errors::KvsError;
+use crate::thread_pool::ThreadPool;
 use crate::Result;
 use serde_json;
 use slog;
@@ -17,18 +18,20 @@ use std::path;
 
 /// Listens for KVS commands over a TCP connection.
 #[allow(clippy::module_name_repetitions, missing_debug_implementations)]
-pub struct KvsServer<T: KvsEngine> {
+pub struct KvsServer<E: KvsEngine, P: ThreadPool> {
     log: Logger,
-    engine: T,
+    engine: E,
+    pool: P,
 }
 
-impl<T> KvsServer<T>
+impl<E, P> KvsServer<E, P>
 where
-    T: KvsEngine,
+    E: KvsEngine,
+    P: ThreadPool,
 {
     /// Create a new KVS server
-    pub fn new(log: Logger, engine: T) -> Result<KvsServer<T>> {
-        Ok(KvsServer { log, engine })
+    pub fn new(log: Logger, engine: E, pool: P) -> Result<KvsServer<E, P>> {
+        Ok(KvsServer { log, engine, pool })
     }
 
     /// Bind to a socket and start listening
@@ -38,18 +41,22 @@ where
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {
-                    self.handle_req(&stream)?;
+                    let eng = self.engine.clone();
+                    let log = self.log.clone();
+                    self.pool.spawn(move || {
+                        KvsServer::<E, P>::handle_req(&stream, &eng).unwrap_or_else(|_e| {
+                            error!(log, "Error handling request");
+                        })
+                    })
                 }
-                Err(_e) => {
-                    warn!(self.log, "Error on connection stream");
-                }
+                Err(_e) => error!(self.log, "Error on connection stream"),
             }
         }
 
         Ok(())
     }
 
-    fn handle_req(&self, stream: &TcpStream) -> Result<()> {
+    fn handle_req(stream: &TcpStream, engine: &E) -> Result<()> {
         let reader = BufReader::new(stream);
         let mut writer = BufWriter::new(stream);
         let commands = serde_json::Deserializer::from_reader(reader).into_iter::<NetworkCommand>();
@@ -65,8 +72,8 @@ where
                     )
                     .expect("Failed to write to TCP stream");
                 }
-                Ok(c) => {
-                    let response = self.handle_command(&c);
+                Ok(cmd) => {
+                    let response = KvsServer::<E, P>::handle_command(&cmd, &engine);
 
                     serde_json::to_writer(&mut writer, &response)
                         .expect("Failed to write to TCP stream");
@@ -79,9 +86,9 @@ where
         Ok(())
     }
 
-    fn handle_command(&self, cmd: &NetworkCommand) -> NetworkResponse {
+    fn handle_command(cmd: &NetworkCommand, engine: &E) -> NetworkResponse {
         match cmd {
-            NetworkCommand::Get { key } => match self.engine.get(key.to_string()) {
+            NetworkCommand::Get { key } => match engine.get(key.to_string()) {
                 Ok(v) => match v {
                     Some(value) => NetworkResponse::Value(value),
                     None => NetworkResponse::Empty,
@@ -91,14 +98,14 @@ where
                 },
             },
             NetworkCommand::Set { key, value } => {
-                match self.engine.set(key.to_string(), value.to_string()) {
+                match engine.set(key.to_string(), value.to_string()) {
                     Ok(()) => NetworkResponse::Empty,
                     _ => NetworkResponse::Error {
                         code: ErrorType::Unknown,
                     },
                 }
             }
-            NetworkCommand::Rm { key } => match self.engine.remove(key.to_string()) {
+            NetworkCommand::Rm { key } => match engine.remove(key.to_string()) {
                 Ok(()) => NetworkResponse::Empty,
                 Err(e) => match e.downcast::<KvsError>() {
                     Ok(KvsError::KeyNotFound) => NetworkResponse::Error {

@@ -4,7 +4,11 @@ extern crate slog;
 extern crate slog_term;
 
 use clap::{crate_version, App, Arg};
-use kvs::{existing_engine, EngineType, KvStore, KvsServer, SledKvsEngine};
+use kvs::{
+    existing_engine,
+    thread_pool::{NaiveThreadPool, ThreadPool},
+    EngineType, KvStore, KvsServer, SledKvsEngine,
+};
 use slog::Drain;
 use std::env;
 
@@ -73,15 +77,16 @@ fn run_kvs() -> kvs::Result<()> {
     info!(log, "Starting kvs server"; "addr" => addr, "engine" => engine_type);
 
     let curr_dir = std::env::current_dir()?;
+    let pool = NaiveThreadPool::new(1)?;
     match engine_type {
         EngineType::Kvs => {
-            let server = KvsServer::new(log, KvStore::open(&curr_dir)?)?;
+            let server = KvsServer::new(log, KvStore::open(&curr_dir)?, pool)?;
             server.run(addr)?;
             Ok(())
         }
 
         EngineType::Sled => {
-            let server = KvsServer::new(log, SledKvsEngine::open(&curr_dir)?)?;
+            let server = KvsServer::new(log, SledKvsEngine::open(&curr_dir)?, pool)?;
             server.run(addr)?;
             Ok(())
         }
