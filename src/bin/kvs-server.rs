@@ -6,10 +6,12 @@ extern crate slog_term;
 use clap::{crate_version, App, Arg};
 use kvs::{
     existing_engine,
-    thread_pool::{NaiveThreadPool, ThreadPool},
+    thread_pool::{SharedQueueThreadPool, ThreadPool},
     EngineType, KvStore, KvsServer, SledKvsEngine,
 };
+use num_cpus;
 use slog::Drain;
+use std::convert::TryInto;
 use std::env;
 
 fn main() -> kvs::Result<()> {
@@ -77,7 +79,11 @@ fn run_kvs() -> kvs::Result<()> {
     info!(log, "Starting kvs server"; "addr" => addr, "engine" => engine_type);
 
     let curr_dir = std::env::current_dir()?;
-    let pool = NaiveThreadPool::new(1)?;
+    let pool = SharedQueueThreadPool::new(
+        num_cpus::get()
+            .try_into()
+            .expect("Can't convert from usize to u32"),
+    )?;
     match engine_type {
         EngineType::Kvs => {
             let server = KvsServer::new(log, KvStore::open(&curr_dir)?, pool)?;
